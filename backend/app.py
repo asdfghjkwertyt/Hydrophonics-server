@@ -230,7 +230,7 @@ sensor_history: deque = deque(maxlen=HISTORY_MAX)  # each entry = snapshot dict
 # ─── SQLite Persistent Database ──────────────────────────────────
 
 def init_db():
-    """Create the sensor_readings table if it does not already exist."""
+    """Create the sensor_readings and tank_config tables if they do not already exist."""
     conn = sqlite3.connect(str(DB_FILE))
     try:
         conn.execute("""
@@ -251,7 +251,31 @@ def init_db():
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON sensor_readings(timestamp)")
+        
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS tank_config (
+                id                INTEGER PRIMARY KEY,
+                tank_height_cm    REAL NOT NULL DEFAULT 30,
+                tank_width_cm     REAL NOT NULL DEFAULT 30,
+                tank_length_cm    REAL NOT NULL DEFAULT 30,
+                sensor_offset_cm  REAL NOT NULL DEFAULT 0,
+                updated_at        TEXT NOT NULL
+            )
+        """)
         conn.commit()
+        
+        # Initialize default config if not exists
+        check = conn.execute("SELECT COUNT(*) FROM tank_config").fetchone()[0]
+        if check == 0:
+            from datetime import datetime
+            now = datetime.utcnow().isoformat() + "Z"
+            conn.execute("""
+                INSERT INTO tank_config
+                (tank_height_cm, tank_width_cm, tank_length_cm, sensor_offset_cm, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (30, 30, 30, 0, now))
+            conn.commit()
+        
         log.info(f"[DB] SQLite database ready at {DB_FILE.resolve()}")
     finally:
         conn.close()
@@ -729,6 +753,120 @@ def get_plant_alerts():
     with state_lock:
         alerts_copy = list(plant_alerts)
     return jsonify({"alerts": alerts_copy}), 200
+
+
+# ─────────────────────────────────────────────────────────────────
+#  ROUTES – Tank Configuration
+# ─────────────────────────────────────────────────────────────────
+@app.route("/tank-config", methods=["GET"])
+def get_tank_config():
+    """Get current tank configuration (dimensions and sensor offset)."""
+    try:
+        conn = sqlite3.connect(str(DB_FILE))
+        conn.row_factory = sqlite3.Row
+        cfg = conn.execute("SELECT * FROM tank_config WHERE id=1").fetchone()
+        conn.close()
+        
+        if not cfg:
+            return jsonify({
+                "tank_height_cm": 30,
+                "tank_width_cm": 30,
+                "tank_length_cm": 30,
+                "sensor_offset_cm": 0,
+            }), 200
+        
+        return jsonify({
+            "tank_height_cm": cfg["tank_height_cm"],
+            "tank_width_cm": cfg["tank_width_cm"],
+            "tank_length_cm": cfg["tank_length_cm"],
+            "sensor_offset_cm": cfg["sensor_offset_cm"],
+            "updated_at": cfg["updated_at"],
+        }), 200
+    except Exception as e:
+        log.error(f"[TANK] get_tank_config error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/tank-config", methods=["POST"])
+def set_tank_config():
+    """Set tank configuration (height, width, length in cm; sensor offset in cm)."""
+    try:
+        data = request.get_json(force=True, silent=True)
+        if not data:
+            return jsonify({"error": "Invalid JSON"}), 400
+        
+        height = float(data.get("tank_height_cm", 30))
+        width = float(data.get("tank_width_cm", 30))
+        length = float(data.get("tank_length_cm", 30))
+        offset = float(data.get("sensor_offset_cm", 0))
+        
+        if height <= 0 or width <= 0 or length <= 0:
+            return jsonify({"error": "Tank dimensions must be positive"}), 400
+        
+        conn = sqlite3.connect(str(DB_FILE))
+        now = datetime.datetime.utcnow().isoformat() + "Z"
+        conn.execute("""
+            UPDATE tank_config
+            SET tank_height_cm=?, tank_width_cm=?, tank_length_cm=?, sensor_offset_cm=?, updated_at=?
+            WHERE id=1
+        """, (height, width, length, offset, now))
+        conn.commit()
+        conn.close()
+        
+        log.info(f"[TANK] Config updated: {height}×{width}×{length}cm, offset={offset}cm")
+        return jsonify({"status": "ok", "tank_height_cm": height, "tank_width_cm": width, 
+                       "tank_length_cm": length, "sensor_offset_cm": offset}), 200
+    except Exception as e:
+        log.error(f"[TANK] set_tank_config error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/water-level-liters", methods=["GET"])
+def get_water_level_liters():
+    """
+    Calculate water level in liters based on current sensor reading and tank config.
+    Returns: {water_level_cm: float, water_volume_liters: float, tank_capacity_liters: float}
+    """
+    try:
+        conn = sqlite3.connect(str(DB_FILE))
+        conn.row_factory = sqlite3.Row
+        
+        # Get latest water level sensor reading
+        latest = conn.execute("""
+            SELECT water_level FROM sensor_readings
+            ORDER BY timestamp DESC LIMIT 1
+        """).fetchone()
+        
+        # Get tank config
+        cfg = conn.execute("SELECT * FROM tank_config WHERE id=1").fetchone()
+        conn.close()
+        
+        water_level_raw = latest["water_level"] if latest else 0
+        
+        height = cfg["tank_height_cm"] if cfg else 30
+        width = cfg["tank_width_cm"] if cfg else 30
+        length = cfg["tank_length_cm"] if cfg else 30
+        offset = cfg["sensor_offset_cm"] if cfg else 0
+        
+        # Calculate actual water level height (in cm)
+        # water_level_raw is typically 0-100 representing percentage of height
+        # But if it's an actual distance from ultrasonic, apply offset
+        water_level_cm = (water_level_raw / 100) * height - offset
+        water_level_cm = max(0, min(water_level_cm, height))  # Clamp to valid range
+        
+        # Calculate volume: V = width × length × height (in cm³), convert to liters (÷1000)
+        tank_capacity_liters = (width * length * height) / 1000
+        water_volume_liters = (width * length * water_level_cm) / 1000
+        
+        return jsonify({
+            "water_level_cm": round(water_level_cm, 2),
+            "water_volume_liters": round(water_volume_liters, 2),
+            "tank_capacity_liters": round(tank_capacity_liters, 2),
+            "water_level_percent": round((water_volume_liters / tank_capacity_liters) * 100, 1) if tank_capacity_liters > 0 else 0,
+        }), 200
+    except Exception as e:
+        log.error(f"[TANK] get_water_level_liters error: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 # ─────────────────────────────────────────────────────────────────

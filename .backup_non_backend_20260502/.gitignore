@@ -1,0 +1,14 @@
+# Python env and DB
+backend/venv/
+backend/*.db
+backend/sensor_history.db
+backend/.env
+backend/__pycache__/
+# Node / frontend
+node_modules/
+dist/
+# media
+*.webm
+*.mp4
+# IDE
+.vscode/

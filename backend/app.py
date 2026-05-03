@@ -1374,6 +1374,7 @@ def set_control():
                 if key in valid_keys and isinstance(value, bool):
                     pending_commands[key] = value
                     latest_sensor_data[key] = value  # Optimistic update for dashboard
+                    latest_sensor_data[f"{key}_reason"] = "Manual override active"
                     updated[key] = value
                     log.info(f"[CONTROL] {key.upper()} → {'ON' if value else 'OFF'}")
 

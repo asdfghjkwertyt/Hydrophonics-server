@@ -1297,17 +1297,21 @@ def get_ai_result():
 def get_control():
     """
     ESP32 polls this to receive pending commands.
-    Returns only non-null commands, then CLEARS them (one-shot delivery).
-    ESP32 has autonomous logic – commands are temporary overrides only.
+    Dashboard reads should not consume commands, or they can clear the
+    queue before the ESP32 sees it.
     """
+    source = request.args.get("source", "").lower()
+    consume = source == "esp32"
+
     with state_lock:
         # Build response with only set commands
         response = {k: v for k, v in pending_commands.items() if v is not None}
-        # Clear commands after delivery so they don't retrigger every poll
-        for k in response:
-            pending_commands[k] = None
+        # Only the ESP32 should consume the queue.
+        if consume:
+            for k in response:
+                pending_commands[k] = None
 
-    log.info(f"[CONTROL] GET – delivering {response}, then clearing.")
+    log.info(f"[CONTROL] GET from {source or 'dashboard'} – delivering {response}{' and clearing' if consume else ' without clearing'}.")
     return jsonify(response), 200
 
 

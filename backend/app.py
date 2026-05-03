@@ -148,7 +148,7 @@ def load_settings() -> dict:
                 saved = json.load(f)
             # Merge with defaults so new keys always exist
             merged = {**DEFAULT_SETTINGS, **saved}
-            log.info(f"[SETTINGS] Loaded settings — active plant: {merged.get('current_plant')}")
+            log.info(f"[SETTINGS] Loaded settings — active plant: {merged.get('current_plant')}, auto_mode: {merged.get('auto_mode')}")
             return merged
         except Exception as e:
             log.warning(f"[SETTINGS] Failed to load settings file: {e}")
@@ -158,7 +158,7 @@ def save_settings(settings: dict):
     try:
         with open(SETTINGS_FILE, "w") as f:
             json.dump(settings, f, indent=2)
-        log.info(f"[SETTINGS] Saved — active plant: {settings.get('current_plant')}")
+        log.info(f"[SETTINGS] Saved — active plant: {settings.get('current_plant')}, auto_mode: {settings.get('auto_mode')}")
     except Exception as e:
         log.warning(f"[SETTINGS] Failed to save settings file: {e}")
 

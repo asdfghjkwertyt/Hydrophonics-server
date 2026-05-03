@@ -138,6 +138,7 @@ DEFAULT_SETTINGS = {
     "active_chart_tab": "env",
     "refresh_interval_ms": 2000,
     "notes": "",
+    "auto_mode": True,
 }
 
 def load_settings() -> dict:
@@ -1306,10 +1307,13 @@ def get_control():
     with state_lock:
         # Build response with only set commands
         response = {k: v for k, v in pending_commands.items() if v is not None}
+        response["auto_mode"] = dashboard_settings.get("auto_mode", True)
+        
         # Only the ESP32 should consume the queue.
         if consume:
             for k in response:
-                pending_commands[k] = None
+                if k != "auto_mode":
+                    pending_commands[k] = None
 
     log.info(f"[CONTROL] GET from {source or 'dashboard'} – delivering {response}{' and clearing' if consume else ' without clearing'}.")
     return jsonify(response), 200
@@ -1347,6 +1351,7 @@ def get_autonomous_status():
                 "humidity_max":  latest_sensor_data.get("humidity_max",        65),
             },
             "timestamp": latest_sensor_data.get("timestamp"),
+            "auto_mode": dashboard_settings.get("auto_mode", True),
         }), 200
 
 
@@ -1402,7 +1407,7 @@ def post_dashboard_settings():
     Note: 'current_plant' is managed via /set-plant — it is ignored here.
     """
     global dashboard_settings
-    allowed_keys = {"active_chart_tab", "refresh_interval_ms", "notes"}
+    allowed_keys = {"active_chart_tab", "refresh_interval_ms", "notes", "auto_mode"}
     try:
         data = request.get_json(force=True, silent=True)
         if not data:

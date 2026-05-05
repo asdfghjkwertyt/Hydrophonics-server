@@ -28,7 +28,8 @@ from google.genai import types as genai_types
 from PIL import Image
 
 # ─── Load environment variables ───────────────────────────────────
-load_dotenv()
+# override=True ensures a changed .env replaces any older shell value.
+load_dotenv(override=True)
 
 # ─── Configuration ────────────────────────────────────────────────
 GEMINI_API_KEY  = os.getenv("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY_HERE")
@@ -342,7 +343,25 @@ _pruner = threading.Thread(target=_prune_loop, daemon=True, name="db-pruner")
 _pruner.start()
 
 # ─── Gemini Client Setup ─────────────────────────────────────────
-GEMINI_CLIENT = genai.Client(api_key=GEMINI_API_KEY)
+_GEMINI_CLIENT_KEY = None
+GEMINI_CLIENT = None
+
+
+def get_gemini_client():
+    """Return a Gemini client that always matches the current API key."""
+    global GEMINI_CLIENT, _GEMINI_CLIENT_KEY, GEMINI_API_KEY
+
+    load_dotenv(override=True)
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+    if not GEMINI_API_KEY or GEMINI_API_KEY == "YOUR_GEMINI_API_KEY_HERE":
+        raise RuntimeError("GEMINI_API_KEY is missing or still set to the placeholder value")
+
+    if GEMINI_CLIENT is None or _GEMINI_CLIENT_KEY != GEMINI_API_KEY:
+        GEMINI_CLIENT = genai.Client(api_key=GEMINI_API_KEY)
+        _GEMINI_CLIENT_KEY = GEMINI_API_KEY
+        log.info("[GEMINI] Client refreshed from current GEMINI_API_KEY")
+
+    return GEMINI_CLIENT
 
 GEMINI_GENERATION_CONFIG = genai_types.GenerateContentConfig(
     temperature=0.2,        # Low temperature for factual/precise answers
@@ -385,6 +404,8 @@ def analyze_image_with_gemini(image_bytes: bytes) -> dict:
     Returns a structured dict with disease_name, confidence, recommendation.
     """
     try:
+        client = get_gemini_client()
+
         # Convert raw bytes to PIL Image for dimension logging
         image_pil = Image.open(io.BytesIO(image_bytes))
         if image_pil.mode not in ("RGB", "L"):
@@ -399,7 +420,7 @@ def analyze_image_with_gemini(image_bytes: bytes) -> dict:
         )
 
         # Call Gemini multimodal API (new SDK)
-        response = GEMINI_CLIENT.models.generate_content(
+        response = client.models.generate_content(
             model=GEMINI_MODEL_ID,
             contents=[DETECTION_PROMPT, image_part],
             config=GEMINI_GENERATION_CONFIG,
@@ -1359,31 +1380,45 @@ def get_autonomous_status():
 def set_control():
     """
     Dashboard POSTs control commands here (fast path).
-    Body: {"pump": true/false, "light": true/false, ...}
+    Body: {"pump": true/false, "light": true/false, "mist": true/false, "shed": true/false}
+    Validates input and queues commands for ESP32 to consume.
     """
     try:
         data = request.get_json(force=True, silent=True)
         if not data:
-            return jsonify({"error": "Invalid JSON"}), 400
+            log.warning(f"[CONTROL] POST: Empty or invalid JSON body")
+            return jsonify({"error": "Invalid JSON body"}), 400
 
         valid_keys = {"pump", "light", "mist", "shed"}
         updated = {}
 
         with state_lock:
             for key, value in data.items():
-                if key in valid_keys and isinstance(value, bool):
-                    pending_commands[key] = value
-                    latest_sensor_data[key] = value  # Optimistic update for dashboard
-                    latest_sensor_data[f"{key}_reason"] = "Manual override active"
-                    updated[key] = value
+                # Validate: key must be in valid_keys and value must be bool
+                if key not in valid_keys:
+                    log.warning(f"[CONTROL] POST: Ignoring unknown key '{key}'")
+                    continue
+                if not isinstance(value, bool):
+                    log.warning(f"[CONTROL] POST: Key '{key}' has non-bool value: {type(value).__name__}")
+                    return jsonify({"error": f"Key '{key}' must be boolean, got {type(value).__name__}"}), 400
+
+                # Queue the command
+                pending_commands[key] = value
+                # Optimistic update for dashboard immediate feedback
+                latest_sensor_data[key] = value
+                latest_sensor_data[f"{key}_reason"] = "Manual override active"
+                updated[key] = value
+                log.info(f"[CONTROL] Queued: {key.upper()} → {value}")
 
         if not updated:
+            log.warning(f"[CONTROL] POST: No valid commands in {list(data.keys())}")
             return jsonify({"error": "No valid commands found"}), 400
 
-        log.info(f"[CONTROL] Queued: {list(updated.keys())}")
-        return jsonify({"status": "queued", "commands": updated}), 200
+        log.info(f"[CONTROL] POST accepted {len(updated)} command(s): {list(updated.keys())}")
+        return jsonify({"status": "queued", "commands": updated, "count": len(updated)}), 200
+        
     except Exception as e:
-        log.error(f"[CONTROL] POST error: {e}")
+        log.error(f"[CONTROL] POST error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 

@@ -1297,9 +1297,8 @@ def get_ai_result():
 @app.route("/control", methods=["GET"])
 def get_control():
     """
-    ESP32 polls this to receive pending commands.
-    Dashboard reads should not consume commands, or they can clear the
-    queue before the ESP32 sees it.
+    ESP32 polls this to receive pending commands with retries.
+    Dashboard GETs should not consume the queue.
     """
     source = request.args.get("source", "").lower()
     consume = source == "esp32"
@@ -1309,13 +1308,14 @@ def get_control():
         response = {k: v for k, v in pending_commands.items() if v is not None}
         response["auto_mode"] = dashboard_settings.get("auto_mode", True)
         
-        # Only the ESP32 should consume the queue.
+        # Only the ESP32 should consume the queue (on successful retrieval)
         if consume:
             for k in response:
                 if k != "auto_mode":
                     pending_commands[k] = None
-
-    log.info(f"[CONTROL] GET from {source or 'dashboard'} – delivering {response}{' and clearing' if consume else ' without clearing'}.")
+            if response:  # Log only if commands were delivered
+                log.info(f"[CONTROL] Delivered to ESP32: {response}")
+    
     return jsonify(response), 200
 
 
@@ -1358,7 +1358,7 @@ def get_autonomous_status():
 @app.route("/control", methods=["POST"])
 def set_control():
     """
-    Dashboard POSTs control commands here.
+    Dashboard POSTs control commands here (fast path).
     Body: {"pump": true/false, "light": true/false, ...}
     """
     try:
@@ -1376,15 +1376,14 @@ def set_control():
                     latest_sensor_data[key] = value  # Optimistic update for dashboard
                     latest_sensor_data[f"{key}_reason"] = "Manual override active"
                     updated[key] = value
-                    log.info(f"[CONTROL] {key.upper()} → {'ON' if value else 'OFF'}")
 
         if not updated:
             return jsonify({"error": "No valid commands found"}), 400
 
+        log.info(f"[CONTROL] Queued: {list(updated.keys())}")
         return jsonify({"status": "queued", "commands": updated}), 200
-
     except Exception as e:
-        log.error(f"[CONTROL] POST error: {e}", exc_info=True)
+        log.error(f"[CONTROL] POST error: {e}")
         return jsonify({"error": str(e)}), 500
 
 

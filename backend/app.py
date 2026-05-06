@@ -872,8 +872,8 @@ def get_water_level_liters():
         
         # Calculate actual water level height (in cm)
         # water_level_raw is typically 0-100 representing percentage of height
-        # But if it's an actual distance from ultrasonic, apply offset
-        water_level_cm = (water_level_raw / 100) * height - offset
+        # Apply sensor offset (sensor dead zone) then convert to height
+        water_level_cm = ((water_level_raw / 100) * height) - offset
         water_level_cm = max(0, min(water_level_cm, height))  # Clamp to valid range
         
         # Calculate volume: V = width × length × height (in cm³), convert to liters (÷1000)

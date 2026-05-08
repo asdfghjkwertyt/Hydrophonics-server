@@ -23,6 +23,7 @@ from threading import Lock
 from dotenv import load_dotenv
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
+from flask_socketio import SocketIO, emit
 import google.genai as genai
 from google.genai import types as genai_types
 from PIL import Image
@@ -53,6 +54,7 @@ log = logging.getLogger("HydroAI")
 # ─── Flask App ────────────────────────────────────────────────────
 app = Flask(__name__, static_folder=str(FRONTEND_DIR), static_url_path="")
 CORS(app)  # Allow cross-origin requests from the dashboard
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 UPLOAD_DIR.mkdir(exist_ok=True)
 
@@ -941,6 +943,10 @@ def receive_sensor_data():
 
         log.info(f"[SENSOR] Data received: temp={data.get('air_temperature')}°C "
                  f"pH={data.get('ph')} TDS={data.get('tds')}ppm")
+        
+        # ── Emit status update to dashboard via WebSocket ─────
+        socketio.emit('status_update', latest_sensor_data, namespace='/')
+        
         return jsonify({"status": "ok"}), 200
 
     except Exception as e:
@@ -1414,6 +1420,11 @@ def set_control():
             log.warning(f"[CONTROL] POST: No valid commands in {list(data.keys())}")
             return jsonify({"error": "No valid commands found"}), 400
 
+        # ── Emit control command to ESP32 and Dashboard via WebSocket ──
+        socketio.emit('control_event', updated, namespace='/')
+        socketio.emit('control_event', updated, namespace='/esp32')
+        log.info(f"[CONTROL] Emitted to WebSockets: {updated}")
+
         log.info(f"[CONTROL] POST accepted {len(updated)} command(s): {list(updated.keys())}")
         return jsonify({"status": "queued", "commands": updated, "count": len(updated)}), 200
         
@@ -1509,12 +1520,22 @@ if __name__ == "__main__":
     log.info(f" Upload directory: {UPLOAD_DIR.resolve()}")
     log.info(f" Plant profiles loaded: {len(plant_db)} ({', '.join(plant_db.keys())})")
     log.info(f" Active plant: {current_plant_key}")
-    log.info(" Starting server on 0.0.0.0:5000 …")
+    log.info(" Starting server on 0.0.0.0:5000 with WebSockets …")
     log.info("=" * 60)
 
-    app.run(
+    socketio.run(
+        app,
         host="0.0.0.0",
         port=5000,
-        debug=False,      # Set True for development, False for production
-        threaded=True,    # Handle concurrent requests from ESP32 + dashboard
+        debug=False,
     )
+
+# ─── ESP32 Plain WebSocket Handler ──────────────────────────────────
+# This allows the ESP32 to use a simple WebSocket client without Socket.io
+@socketio.on('connect', namespace='/esp32')
+def esp32_connect():
+    log.info("[WS-ESP32] ESP32 connected via WebSocket")
+
+@socketio.on('disconnect', namespace='/esp32')
+def esp32_disconnect():
+    log.info("[WS-ESP32] ESP32 disconnected")

@@ -1,0 +1,3914 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HydroAI — Smart Hydroponic Control Center</title>
+  <meta name="description" content="Real-time AI-powered hydroponic farm monitoring and control dashboard with Gemini plant disease detection." />
+  <link rel="icon" type="image/svg+xml" href='data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"%3E%3Ctext x="50%25" y="50%25" dominant-baseline="middle" text-anchor="middle" font-size="48"%3E%F0%9F%8C%BF%3C/text%3E%3C/svg%3E' />
+
+  <!-- Google Fonts -->
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Poppins:wght@300;400;500;600;700&family=SF+Pro+Display:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <!-- Socket.io -->
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <link rel="stylesheet" href="style.css" />
+
+  <style>
+    /* ─── Settings Button ──────────────────────────────── */
+    .settings-btn {
+      display: flex; align-items: center; gap: 5px;
+      padding: 6px 14px; border-radius: 20px;
+      border: 1px solid rgba(56,148,255,0.35);
+      background: rgba(56,148,255,0.1); color: var(--text-secondary);
+      font-size: 0.78rem; font-family: 'Inter', sans-serif; font-weight: 600;
+      cursor: pointer; transition: all 0.2s; white-space: nowrap;
+    }
+    .settings-btn:hover { background:rgba(56,148,255,0.2); color:#e8f0fe; }
+
+    /* Header right — compact on mobile */
+    #last-update { display: none; }
+    @media (min-width: 600px) { #last-update { display: block; } }
+
+    /* ─── Plant Panel ───────────────────────────────── */
+    .plant-panel {
+      display: flex; flex-direction: column; gap: 1rem;
+      padding: 1rem 1.15rem; margin-bottom: 1rem;
+      border: 1px solid rgba(34,215,122,0.2);
+      background: linear-gradient(135deg, rgba(34,215,122,0.05), rgba(56,148,255,0.04));
+    }
+    @media (min-width: 640px) {
+      .plant-panel { flex-direction: row; align-items: center; }
+    }
+    .plant-panel-left { display: flex; align-items: center; gap: 0.9rem; flex-shrink: 0; }
+    .plant-emoji-display {
+      font-size: 2.2rem; line-height: 1;
+      filter: drop-shadow(0 0 12px rgba(34,215,122,0.4));
+      transition: transform 0.3s;
+    }
+    .plant-emoji-display:hover { transform: scale(1.15) rotate(-5deg); }
+    .plant-panel-label { font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; }
+    .plant-name-display {
+      font-size: 1.1rem; font-weight: 700; color: #22d77a;
+      margin: 2px 0 6px; font-family: 'Inter', sans-serif;
+    }
+    .plant-selector-wrap select {
+      background: rgba(255,255,255,0.05); border: 1px solid rgba(56,148,255,0.25);
+      color: var(--text-secondary); border-radius: 8px; padding: 5px 10px;
+      font-size: 0.78rem; outline: none; cursor: pointer; max-width: 200px;
+    }
+    /* Condition pills — 2×2 grid on mobile */
+    .plant-conditions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.4rem; flex: 1;
+    }
+    @media (min-width: 800px) {
+      .plant-conditions { display: flex; flex-wrap: wrap; gap: 0.45rem; }
+    }
+    .cond-pill {
+      padding: 5px 10px; border-radius: 20px; font-size: 0.72rem; font-weight: 500;
+      white-space: nowrap; border: 1px solid transparent; text-align:center;
+    }
+    .cond-pill.temp  { background:rgba(255,140,66,0.12); border-color:rgba(255,140,66,0.3); color:#ff8c42; }
+    .cond-pill.hum   { background:rgba(34,229,229,0.1);  border-color:rgba(34,229,229,0.3); color:#22e5e5; }
+    .cond-pill.ph    { background:rgba(168,85,247,0.1);  border-color:rgba(168,85,247,0.3); color:#a855f7; }
+    .cond-pill.tds   { background:rgba(59,157,255,0.1);  border-color:rgba(59,157,255,0.3); color:#3b9dff; }
+    .cond-pill.wt    { background:rgba(34,215,122,0.1);  border-color:rgba(34,215,122,0.3); color:#22d77a; }
+    .cond-pill.wl    { background:rgba(59,157,255,0.1);  border-color:rgba(59,157,255,0.3); color:#3b9dff; }
+    .cond-pill.sun   { background:rgba(245,200,66,0.1);  border-color:rgba(245,200,66,0.3); color:#f5c842; }
+    .cond-pill.shed  { background:rgba(255,140,66,0.08); border-color:rgba(255,140,66,0.25); color:#ff8c42; }
+    .btn-settings {
+      align-self: flex-end; padding: 8px 16px; border-radius: 20px;
+      border: 1px solid rgba(34,215,122,0.4); background: rgba(34,215,122,0.1);
+      color: #22d77a; font-size: 0.8rem; font-weight: 600; cursor: pointer;
+      transition: all 0.2s; white-space: nowrap;
+    }
+    @media (min-width: 640px) { .btn-settings { margin-left: auto; align-self: center; } }
+    .btn-settings:hover { background:rgba(34,215,122,0.2); box-shadow:0 0 16px rgba(34,215,122,0.2); }
+
+    /* ─── Plant Alerts ────────────────────────────────── */
+    .plant-alert-item {
+      display: flex; gap: 8px; padding: 8px 12px; border-radius: 8px;
+      font-size: 0.78rem; color: var(--text-secondary);
+      background: rgba(245,200,66,0.07); border: 1px solid rgba(245,200,66,0.25);
+    }
+
+    /* ─── Sensor card edit button ────────────────────────── */
+    .sensor-card { position: relative; }
+    .sensor-edit-btn {
+      position: absolute; top: 10px; right: 10px;
+      background: rgba(56,148,255,0.1); border: 1px solid rgba(56,148,255,0.2);
+      color: var(--text-muted); border-radius: 6px; padding: 3px 7px;
+      font-size: 0.7rem; cursor: pointer; transition: all 0.2s;
+      opacity: 0; pointer-events: none;
+    }
+    .sensor-card:hover .sensor-edit-btn,
+    .sensor-card:focus-within .sensor-edit-btn {
+      opacity: 1; pointer-events: all;
+    }
+    @media (hover: none) {
+      /* Always show edit buttons on touch devices */
+      .sensor-edit-btn { opacity: 1; pointer-events: all; }
+    }
+    .sensor-edit-btn:hover { background:rgba(56,148,255,0.25); color:#e8f0fe; border-color:rgba(56,148,255,0.5); }
+
+    /* ─── Settings Modal ──────────────────────────────── */
+    .settings-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.65);
+      backdrop-filter: blur(4px); z-index: 900;
+      opacity: 0; pointer-events: none; transition: opacity 0.25s;
+    }
+    .settings-overlay.open { opacity: 1; pointer-events: all; }
+
+    .settings-modal {
+      position: fixed; top: 0; right: -105vw; width: min(480px, 100vw); height: 100vh;
+      background: rgba(13, 21, 32, 0.85); border-left: 1px solid rgba(56,148,255,0.15);
+      box-shadow: -20px 0 60px rgba(0,0,0,0.6); z-index: 950;
+      overflow-y: auto; overflow-x: hidden;
+      transition: right 0.3s cubic-bezier(0.4,0,0.2,1);
+      display: flex; flex-direction: column;
+      backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+    }
+    .settings-modal.open { right: 0; }
+
+    .settings-header {
+      display: flex; align-items: flex-start; justify-content: space-between;
+      padding: 1.25rem 1.25rem 1rem; border-bottom: 1px solid rgba(56,148,255,0.1);
+      position: sticky; top: 0; background: rgba(13, 21, 32, 0.92); z-index: 10;
+    }
+    .settings-title { font-size: 1.05rem; font-weight: 700; color: #e8f0fe; }
+    .settings-sub   { font-size: 0.72rem; color: var(--text-muted); margin-top: 3px; }
+    .settings-close {
+      background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1);
+      color: var(--text-secondary); border-radius: 8px; width: 34px; height: 34px;
+      font-size: 1.15rem; cursor: pointer; transition: all 0.2s; flex-shrink: 0;
+    }
+    .settings-close:hover { background:rgba(255,92,92,0.15); color:#ff5c5c; }
+
+    /* Section anchor pills for quick navigation */
+    .settings-nav {
+      display: flex; gap: 6px; flex-wrap: wrap;
+      padding: 0.75rem 1.25rem; border-bottom: 1px solid rgba(56,148,255,0.07);
+      position: sticky; top: 73px; background: rgba(13, 21, 32, 0.92); z-index: 9;
+    }
+    .snav-btn {
+      padding: 4px 10px; border-radius: 100px; font-size: 0.68rem; font-weight: 600;
+      border: 1px solid rgba(56,148,255,0.2); background: rgba(56,148,255,0.06);
+      color: var(--text-muted); cursor: pointer; transition: all 0.2s;
+    }
+    .snav-btn:hover, .snav-btn.active {
+      background: rgba(56,148,255,0.18); color: #e8f0fe;
+      border-color: rgba(56,148,255,0.45);
+    }
+
+    .settings-section { padding: 1rem 1.25rem; }
+    .settings-group {
+      background: rgba(255,255,255,0.02); border: 1px solid rgba(56,148,255,0.08);
+      border-radius: 12px; padding: 1rem; margin-bottom: 1rem;
+    }
+    .settings-group-title {
+      font-size: 0.75rem; font-weight: 700; color: var(--text-secondary);
+      text-transform: uppercase; letter-spacing: 0.07em;
+      margin-bottom: 0.85rem; display: flex; align-items: center; gap: 6px;
+    }
+    .settings-label {
+      font-size: 0.7rem; font-weight: 600; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 0.5rem;
+    }
+    .settings-row {
+      display: flex; gap: 0.6rem; flex-wrap: wrap; margin-bottom: 0.75rem;
+    }
+    .settings-field {
+      display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 80px;
+    }
+    .settings-field label { font-size: 0.68rem; color: var(--text-muted); }
+    .settings-field input, .settings-section select, .settings-modal select {
+      background: rgba(255,255,255,0.05); border: 1px solid rgba(56,148,255,0.18);
+      color: #e8f0fe; border-radius: 8px; padding: 8px 10px; font-size: 0.82rem;
+      outline: none; width: 100%; box-sizing: border-box; transition: border-color 0.2s;
+    }
+    .settings-field input:focus, .settings-section select:focus {
+      border-color: rgba(56,148,255,0.55); background: rgba(56,148,255,0.07);
+    }
+    .btn-save {
+      width: 100%; padding: 11px; border-radius: 10px; border: none;
+      background: linear-gradient(135deg, #3b9dff, #1e6ed4);
+      color: #fff; font-size: 0.88rem; font-weight: 600; cursor: pointer;
+      margin-top: 0.5rem; transition: all 0.2s;
+    }
+    .btn-save:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(59,157,255,0.35); }
+    .btn-save:active { transform: none; }
+    .btn-create {
+      background: linear-gradient(135deg,#22d77a,#15a058);
+    }
+
+    /* Sensor card out-of-range glow */
+    .sensor-card.alert-warn {
+      border-color: rgba(245,200,66,0.55) !important;
+      box-shadow: 0 0 20px rgba(245,200,66,0.12);
+    }
+    .sensor-card.alert-crit {
+      border-color: rgba(255,92,92,0.55) !important;
+      box-shadow: 0 0 20px rgba(255,92,92,0.15);
+    }
+
+    /* ─── Mobile fixes ─────────────────────────────────── */
+    @media (max-width: 480px) {
+      header { padding: 0 0.85rem; }
+      .header-inner { height: 56px; }
+      .logo-sub { display: none; }
+      .logo-text { font-size: 1.05rem; }
+      .logo-icon { width: 30px; height: 30px; font-size: 15px; }
+      .header-right { gap: 0.5rem; }
+      .status-badge { padding: 3px 8px; font-size: 0.7rem; }
+      .settings-btn { padding: 5px 10px; font-size: 0.72rem; }
+
+      main { padding: 0.85rem 0.85rem 3rem; }
+
+      /* Sensor grids always 2-col on phone */
+      .sensor-grid-top { grid-template-columns: 1fr 1fr !important; }
+      .sensor-grid-mid { grid-template-columns: 1fr 1fr !important; }
+      .sensor-value    { font-size: 1.55rem !important; }
+      .card            { padding: 1rem; }
+
+      /* Settings full-width on phone */
+      .settings-modal { width: 100vw; }
+      .settings-header { padding: 1rem; }
+      .settings-section { padding: 0.85rem 1rem; }
+      .settings-group { padding: 0.85rem; }
+
+      /* Bottom grid single column */
+      .bottom-grid { grid-template-columns: 1fr !important; }
+      .chart-canvas-wrap { height: 130px !important; }
+      .charts-3col { grid-template-columns: 1fr !important; }
+      .charts-2col { grid-template-columns: 1fr !important; }
+      .stats-row   { grid-template-columns: 1fr 1fr !important; }
+
+      /* Toast bottom of screen */
+      #toast { right: 1rem; bottom: 1rem; left: 1rem; max-width: none; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ═══════════════════════ NATURE INTRO ═══════════════════════ -->
+<div id="ni">
+  <canvas id="ni-bg"></canvas>
+  <canvas id="ni-fx"></canvas>
+  <canvas id="ni-rain"></canvas>
+
+  <!-- Vignette -->
+  <div id="ni-vignette"></div>
+
+  <!-- Hex grid overlay -->
+  <svg id="ni-hexgrid" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <pattern id="hex-pat" x="0" y="0" width="60" height="69.28" patternUnits="userSpaceOnUse">
+        <polygon points="30,0 60,17.32 60,51.96 30,69.28 0,51.96 0,17.32"
+          fill="none" stroke="rgba(34,215,122,0.04)" stroke-width="0.8"/>
+      </pattern>
+    </defs>
+    <rect width="100%" height="100%" fill="url(#hex-pat)"/>
+  </svg>
+
+  <!-- Vine borders — all 4 corners -->
+  <svg id="ni-vines-tl" viewBox="0 0 300 300" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path class="vine-path" d="M0,0 Q35,50 22,95 Q10,135 45,168 Q75,195 60,235 Q48,262 82,280" stroke="rgba(34,215,122,0.4)" stroke-width="1.8" fill="none"/>
+    <path class="vine-path" d="M0,25 Q55,60 42,102 Q30,145 68,172 Q98,195 80,228" stroke="rgba(34,215,122,0.22)" stroke-width="1.1" fill="none" style="animation-delay:0.4s"/>
+    <path class="vine-path" d="M20,0 Q60,40 50,85 Q40,125 75,152" stroke="rgba(59,157,255,0.15)" stroke-width="0.9" fill="none" style="animation-delay:0.8s"/>
+    <ellipse class="vine-leaf" cx="45" cy="168" rx="11" ry="7" fill="rgba(34,215,122,0.32)" transform="rotate(-30 45 168)"/>
+    <ellipse class="vine-leaf" cx="24" cy="97" rx="9" ry="5.5" fill="rgba(34,215,122,0.26)" transform="rotate(22 24 97)" style="animation-delay:0.5s"/>
+    <ellipse class="vine-leaf" cx="64" cy="238" rx="10" ry="6" fill="rgba(34,215,122,0.22)" transform="rotate(-16 64 238)" style="animation-delay:0.9s"/>
+    <ellipse class="vine-leaf" cx="52" cy="105" rx="7" ry="4" fill="rgba(59,157,255,0.18)" transform="rotate(35 52 105)" style="animation-delay:1.2s"/>
+  </svg>
+  <svg id="ni-vines-tr" viewBox="0 0 300 300" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path class="vine-path" d="M300,0 Q265,50 278,95 Q290,135 255,168 Q225,195 240,235 Q252,262 218,280" stroke="rgba(34,215,122,0.35)" stroke-width="1.6" fill="none" style="animation-delay:0.3s"/>
+    <path class="vine-path" d="M300,28 Q248,58 260,103 Q272,148 234,172 Q202,195 222,230" stroke="rgba(34,215,122,0.18)" stroke-width="1" fill="none" style="animation-delay:0.7s"/>
+    <ellipse class="vine-leaf" cx="255" cy="168" rx="11" ry="7" fill="rgba(34,215,122,0.28)" transform="rotate(150 255 168)"/>
+    <ellipse class="vine-leaf" cx="278" cy="97" rx="9" ry="5.5" fill="rgba(34,215,122,0.22)" transform="rotate(160 278 97)" style="animation-delay:0.6s"/>
+    <ellipse class="vine-leaf" cx="220" cy="238" rx="10" ry="6" fill="rgba(59,157,255,0.18)" transform="rotate(170 220 238)" style="animation-delay:1s"/>
+  </svg>
+  <svg id="ni-vines-bl" viewBox="0 0 300 300" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path class="vine-path" d="M0,300 Q40,265 28,220 Q16,180 50,150 Q82,122 68,80 Q56,50 90,22" stroke="rgba(34,215,122,0.3)" stroke-width="1.5" fill="none" style="animation-delay:0.5s"/>
+    <path class="vine-path" d="M22,300 Q60,262 50,218 Q40,175 75,147" stroke="rgba(59,157,255,0.16)" stroke-width="0.9" fill="none" style="animation-delay:1s"/>
+    <ellipse class="vine-leaf" cx="51" cy="150" rx="10" ry="6" fill="rgba(34,215,122,0.25)" transform="rotate(30 51 150)" style="animation-delay:0.7s"/>
+    <ellipse class="vine-leaf" cx="29" cy="218" rx="8" ry="5" fill="rgba(34,215,122,0.2)" transform="rotate(20 29 218)" style="animation-delay:1.1s"/>
+  </svg>
+  <svg id="ni-vines-br" viewBox="0 0 300 300" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path class="vine-path" d="M300,300 Q260,258 272,212 Q284,168 248,138 Q215,110 230,68 Q244,36 210,10" stroke="rgba(34,215,122,0.32)" stroke-width="1.6" fill="none" style="animation-delay:0.25s"/>
+    <path class="vine-path" d="M300,272 Q252,245 266,200 Q280,158 244,128 Q210,100 228,60" stroke="rgba(59,157,255,0.14)" stroke-width="1" fill="none" style="animation-delay:0.75s"/>
+    <ellipse class="vine-leaf" cx="248" cy="138" rx="11" ry="7" fill="rgba(34,215,122,0.26)" transform="rotate(148 248 138)"/>
+    <ellipse class="vine-leaf" cx="270" cy="210" rx="9" ry="5.5" fill="rgba(34,215,122,0.22)" transform="rotate(158 270 210)" style="animation-delay:0.85s"/>
+    <ellipse class="vine-leaf" cx="212" cy="68" rx="8" ry="5" fill="rgba(59,157,255,0.18)" transform="rotate(172 212 68)" style="animation-delay:1.15s"/>
+  </svg>
+
+  <!-- Water at bottom -->
+  <div id="ni-water">
+    <div id="ni-mist"></div>
+    <svg id="ni-wave0" viewBox="0 0 1440 140" preserveAspectRatio="none"><path d="M0,90 C120,60 240,120 360,90 C480,60 600,120 720,90 C840,60 960,120 1080,90 C1200,60 1320,120 1440,90 L1440,140 L0,140 Z" fill="rgba(5,28,55,0.3)"/></svg>
+    <svg id="ni-wave1" viewBox="0 0 1440 120" preserveAspectRatio="none"><path d="M0,60 C180,100 360,20 540,60 C720,100 900,20 1080,60 C1260,100 1350,40 1440,60 L1440,120 L0,120 Z" fill="rgba(8,38,75,0.5)"/></svg>
+    <svg id="ni-wave2" viewBox="0 0 1440 120" preserveAspectRatio="none"><path d="M0,70 C200,30 400,100 600,70 C800,40 1000,100 1200,70 C1350,50 1400,80 1440,70 L1440,120 L0,120 Z" fill="rgba(6,25,58,0.55)"/></svg>
+    <svg id="ni-wave3" viewBox="0 0 1440 100" preserveAspectRatio="none"><path d="M0,50 C150,80 300,20 450,50 C600,80 750,20 900,50 C1050,80 1200,25 1440,50 L1440,100 L0,100 Z" fill="rgba(4,18,42,0.7)"/></svg>
+    <div id="ni-water-glow"></div>
+  </div>
+
+  <!-- Center stage -->
+  <div id="ni-center">
+
+    <!-- Pulsing ring system around orb -->
+    <div id="ni-rings">
+      <div class="ni-ring ni-ring-1"></div>
+      <div class="ni-ring ni-ring-2"></div>
+      <div class="ni-ring ni-ring-3"></div>
+      <div class="ni-ring ni-ring-scan"></div>
+    </div>
+
+    <!-- Glowing orb behind logo -->
+    <div id="ni-orb">
+      <div id="ni-orb-core"></div>
+    </div>
+
+    <!-- Main plant illustration -->
+    <div id="ni-plant-wrap">
+      <svg id="ni-plant" viewBox="0 0 180 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <!-- Roots -->
+        <path class="np-root" d="M90,195 Q80,185 70,190" stroke="rgba(34,215,122,0.4)" stroke-width="1.2" stroke-linecap="round"/>
+        <path class="np-root" d="M90,195 Q100,183 112,188" stroke="rgba(34,215,122,0.4)" stroke-width="1.2" stroke-linecap="round" style="animation-delay:0.15s"/>
+        <path class="np-root" d="M90,195 Q86,178 78,182" stroke="rgba(34,215,122,0.3)" stroke-width="1" stroke-linecap="round" style="animation-delay:0.3s"/>
+        <path class="np-root" d="M90,195 Q94,180 104,184" stroke="rgba(34,215,122,0.25)" stroke-width="0.9" stroke-linecap="round" style="animation-delay:0.45s"/>
+        <!-- Main stem -->
+        <path id="np-stem" d="M90,195 Q87,165 90,135 Q93,105 89,75 Q86,50 90,22" stroke="#22d77a" stroke-width="2.8" stroke-linecap="round" fill="none"/>
+        <!-- Left leaves -->
+        <path id="np-ll1" d="M90,158 Q65,145 50,128 Q68,132 88,148" fill="#22d77a"/>
+        <path id="np-ll2" d="M90,118 Q62,103 46,84 Q66,91 89,110" fill="#1ec96e"/>
+        <path id="np-ll3" d="M90,78 Q68,63 55,44 Q72,53 89,70" fill="#22d77a"/>
+        <!-- Right leaves -->
+        <path id="np-rl1" d="M90,142 Q118,128 134,110 Q116,116 91,132" fill="#3adf90"/>
+        <path id="np-rl2" d="M90,102 Q120,87 138,66 Q118,76 90,95" fill="#2ed47e"/>
+        <path id="np-rl3" d="M90,64 Q118,48 136,28 Q116,40 90,58" fill="#3adf90"/>
+        <!-- Crown leaves at top -->
+        <path id="np-cl1" d="M90,22 Q72,8 62,0 Q78,6 89,18" fill="#22d77a"/>
+        <path id="np-cl2" d="M90,22 Q108,6 118,0 Q102,8 91,18" fill="#3adf90"/>
+        <!-- Glowing bud -->
+        <circle id="np-bud" cx="90" cy="18" r="7" fill="#22d77a"/>
+        <circle id="np-bud-ring" cx="90" cy="18" r="12" fill="none" stroke="rgba(34,215,122,0.3)" stroke-width="1"/>
+        <!-- Water droplets -->
+        <ellipse class="np-drop" cx="72" cy="172" rx="2.5" ry="3.5" fill="#5bc8ff"/>
+        <ellipse class="np-drop" cx="108" cy="158" rx="2" ry="3" fill="#5bc8ff" style="animation-delay:0.7s"/>
+        <ellipse class="np-drop" cx="62" cy="138" rx="1.8" ry="2.5" fill="#5bc8ff" style="animation-delay:1.4s"/>
+        <ellipse class="np-drop" cx="118" cy="128" rx="2" ry="2.8" fill="#7dd9ff" style="animation-delay:2.1s"/>
+        <!-- Sparkle dots -->
+        <circle class="np-spark" cx="45" cy="126" r="2" fill="#f5c842"/>
+        <circle class="np-spark" cx="136" cy="108" r="1.5" fill="#22e5e5" style="animation-delay:0.5s"/>
+        <circle class="np-spark" cx="52" cy="82" r="1.8" fill="#f5c842" style="animation-delay:1s"/>
+        <circle class="np-spark" cx="140" cy="64" r="1.5" fill="#22e5e5" style="animation-delay:1.5s"/>
+        <circle class="np-spark" cx="42" cy="168" r="1.3" fill="#a8f542" style="animation-delay:2s"/>
+        <circle class="np-spark" cx="144" cy="148" r="1.3" fill="#f5c842" style="animation-delay:2.5s"/>
+      </svg>
+    </div>
+
+    <!-- Title block -->
+    <div id="ni-titles">
+      <div id="ni-eyebrow">🌊 Hydroponic Intelligence</div>
+      <h1 id="ni-h1"><span id="ni-h1-hydro">Hydro</span><span id="ni-h1-ai">AI</span></h1>
+      <p id="ni-sub">Smart Hydroponic Control Center</p>
+    </div>
+
+    <!-- Live status -->
+    <div id="ni-status-row">
+      <div class="ni-stat" data-sound="1"><div class="ni-stat-dot green"></div><span>Sensors Online</span></div>
+      <div class="ni-stat-divider"></div>
+      <div class="ni-stat" data-sound="2"><div class="ni-stat-dot blue"></div><span>AI Active</span></div>
+      <div class="ni-stat-divider"></div>
+      <div class="ni-stat" data-sound="3"><div class="ni-stat-dot cyan"></div><span>Farm Connected</span></div>
+    </div>
+
+    <!-- Enter -->
+    <button id="ni-btn">
+      <span class="ni-btn-ripple"></span>
+      <span class="ni-btn-icon">🌿</span>
+      <span>Enter Dashboard</span>
+      <span class="ni-btn-arrow">→</span>
+    </button>
+  </div>
+</div>
+
+<style>
+/* ───────────────────────────── BASE ───────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;0,900;1,700&display=swap');
+
+#ni {
+  position: fixed; inset: 0; z-index: 9999;
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+  background: radial-gradient(ellipse 140% 120% at 50% 115%,
+    #051a0e 0%, #030e0a 25%, #020b14 55%, #010810 80%, #000608 100%);
+}
+
+/* ─── Canvases ─────────────────────────────────────────────────── */
+#ni-bg, #ni-fx, #ni-rain {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  pointer-events: none;
+}
+#ni-fx   { z-index: 3; }
+#ni-rain { z-index: 4; }
+
+/* ─── Hex grid ─────────────────────────────────────────────────── */
+#ni-hexgrid {
+  position: absolute; inset: 0; pointer-events: none; z-index: 1;
+  opacity: 0; animation: ni-fadein 2s 1.5s forwards;
+}
+
+/* ─── Vignette ─────────────────────────────────────────────────── */
+#ni-vignette {
+  position: absolute; inset: 0; pointer-events: none; z-index: 6;
+  background: radial-gradient(ellipse 75% 75% at 50% 50%,
+    transparent 35%, rgba(1,6,10,0.5) 70%, rgba(0,4,8,0.85) 100%);
+}
+
+/* ─── Vines ────────────────────────────────────────────────────── */
+#ni-vines-tl { position: absolute; top: 0; left: 0; width: 300px; height: 300px; pointer-events: none; z-index: 2; }
+#ni-vines-tr { position: absolute; top: 0; right: 0; width: 300px; height: 300px; pointer-events: none; z-index: 2; }
+#ni-vines-bl { position: absolute; bottom: 0; left: 0; width: 300px; height: 300px; pointer-events: none; z-index: 2; }
+#ni-vines-br { position: absolute; bottom: 0; right: 0; width: 300px; height: 300px; pointer-events: none; z-index: 2; }
+
+.vine-path {
+  stroke-dasharray: 500;
+  stroke-dashoffset: 500;
+  animation: vine-draw 3s 0.4s cubic-bezier(0.4,0,0.2,1) forwards;
+}
+.vine-leaf {
+  opacity: 0;
+  transform-origin: center;
+  animation: leaf-pop 0.6s 2.5s cubic-bezier(0.34,1.56,0.64,1) forwards;
+}
+@keyframes vine-draw { to { stroke-dashoffset: 0; } }
+@keyframes leaf-pop  { to { opacity: 1; } }
+
+/* ─── Water ────────────────────────────────────────────────────── */
+#ni-water {
+  position: absolute; bottom: 0; left: 0; right: 0; height: 260px;
+  pointer-events: none; z-index: 1;
+}
+#ni-wave0 { position: absolute; bottom: 0; left: 0; width: 100%; height: 140px; animation: wave-shift 10s ease-in-out infinite; opacity: 0.5; }
+#ni-wave1 { position: absolute; bottom: 0; left: 0; width: 100%; height: 120px; animation: wave-shift 6s ease-in-out infinite; }
+#ni-wave2 { position: absolute; bottom: 0; left: 0; width: 100%; height: 120px; animation: wave-shift 8s 1s ease-in-out infinite reverse; opacity: 0.7; }
+#ni-wave3 { position: absolute; bottom: 0; left: 0; width: 100%; height: 100px; animation: wave-shift 5s 0.5s ease-in-out infinite; opacity: 0.9; }
+
+@keyframes wave-shift {
+  0%,100% { transform: translateX(0); }
+  50%     { transform: translateX(-70px); }
+}
+
+#ni-mist {
+  position: absolute; bottom: 80px; left: 0; right: 0; height: 120px;
+  background: linear-gradient(to top,
+    rgba(8,35,70,0.35) 0%,
+    rgba(10,40,80,0.2) 40%,
+    transparent 100%);
+  pointer-events: none; z-index: 2;
+  animation: mist-drift 12s ease-in-out infinite alternate;
+}
+@keyframes mist-drift {
+  0%   { transform: translateX(0) scaleX(1); opacity: 0.8; }
+  100% { transform: translateX(20px) scaleX(1.02); opacity: 1; }
+}
+
+#ni-water-glow {
+  position: absolute; bottom: 0; left: 0; right: 0; height: 90px;
+  background: radial-gradient(ellipse 80% 100% at 50% 100%,
+    rgba(34,215,122,0.06) 0%, rgba(59,157,255,0.04) 40%, transparent 70%);
+  pointer-events: none; z-index: 3;
+  animation: water-glow-pulse 4s ease-in-out infinite;
+}
+@keyframes water-glow-pulse {
+  0%,100% { opacity: 0.7; }
+  50%     { opacity: 1.3; }
+}
+
+/* ─── Center ───────────────────────────────────────────────────── */
+#ni-center {
+  position: relative; z-index: 5;
+  display: flex; flex-direction: column; align-items: center;
+  gap: 1rem;
+}
+
+/* ─── Ring system ──────────────────────────────────────────────── */
+#ni-rings {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+.ni-ring {
+  position: absolute; border-radius: 50%;
+  top: 50%; left: 50%; transform: translate(-50%, -50%);
+}
+.ni-ring-1 {
+  width: 320px; height: 320px;
+  border: 1px solid rgba(34,215,122,0.08);
+  animation: ring-breathe 5s ease-in-out infinite;
+}
+.ni-ring-2 {
+  width: 440px; height: 440px;
+  border: 1px solid rgba(59,157,255,0.06);
+  animation: ring-breathe 7s 1s ease-in-out infinite;
+}
+.ni-ring-3 {
+  width: 560px; height: 560px;
+  border: 1px solid rgba(34,229,229,0.04);
+  animation: ring-breathe 9s 2s ease-in-out infinite;
+}
+.ni-ring-scan {
+  width: 380px; height: 380px;
+  border: none;
+  border-top: 1.5px solid rgba(34,215,122,0.4);
+  border-right: 1.5px solid rgba(34,215,122,0.15);
+  opacity: 0;
+  animation: ring-scan 3s 1s linear infinite, ni-fadein 0.5s 1s forwards;
+}
+@keyframes ring-breathe {
+  0%,100% { opacity: 0.6; transform: translate(-50%,-50%) scale(1); }
+  50%     { opacity: 1;   transform: translate(-50%,-50%) scale(1.025); }
+}
+@keyframes ring-scan {
+  from { transform: translate(-50%,-50%) rotate(0deg); }
+  to   { transform: translate(-50%,-50%) rotate(360deg); }
+}
+
+/* ─── Glowing orb ──────────────────────────────────────────────── */
+#ni-orb {
+  position: absolute;
+  width: 380px; height: 380px; border-radius: 50%;
+  background: radial-gradient(circle,
+    rgba(34,215,122,0.13) 0%,
+    rgba(34,215,122,0.05) 35%,
+    rgba(59,157,255,0.03) 60%,
+    transparent 75%);
+  top: 50%; left: 50%;
+  transform: translate(-50%,-50%);
+  animation: orb-breathe 4s ease-in-out infinite;
+  pointer-events: none;
+}
+#ni-orb-core {
+  position: absolute; top: 50%; left: 50%;
+  transform: translate(-50%,-50%);
+  width: 120px; height: 120px; border-radius: 50%;
+  background: radial-gradient(circle,
+    rgba(34,215,122,0.18) 0%, transparent 70%);
+  animation: orb-breathe 2.5s 0.5s ease-in-out infinite;
+}
+@keyframes orb-breathe {
+  0%,100% { transform:translate(-50%,-50%) scale(1);    opacity:0.7; }
+  50%     { transform:translate(-50%,-50%) scale(1.15); opacity:1; }
+}
+
+/* ─── Plant SVG ────────────────────────────────────────────────── */
+#ni-plant-wrap {
+  filter: drop-shadow(0 0 28px rgba(34,215,122,0.55))
+          drop-shadow(0 0 60px rgba(34,215,122,0.22))
+          drop-shadow(0 0 100px rgba(59,157,255,0.1));
+  opacity: 0;
+  animation: ni-fadein 0.6s 0.3s forwards;
+  position: relative; z-index: 2;
+}
+#ni-plant { width: 170px; height: 188px; }
+
+/* Stem */
+#np-stem {
+  stroke-dasharray: 230; stroke-dashoffset: 230;
+  animation: draw-path 1.6s 0.5s cubic-bezier(0.4,0,0.2,1) forwards;
+  filter: drop-shadow(0 0 3px rgba(34,215,122,0.6));
+}
+@keyframes draw-path { to { stroke-dashoffset: 0; } }
+
+/* Roots */
+.np-root {
+  stroke-dasharray: 40; stroke-dashoffset: 40;
+  animation: draw-path 0.6s 0.4s ease-out forwards;
+}
+
+/* Left leaves */
+#np-ll1 { opacity:0; animation: lf 0.45s 1.55s cubic-bezier(0.34,1.56,0.64,1) forwards; transform-origin:90px 158px; transform:scale(0) rotate(15deg); }
+#np-ll2 { opacity:0; animation: lf 0.45s 1.85s cubic-bezier(0.34,1.56,0.64,1) forwards; transform-origin:90px 118px; transform:scale(0) rotate(12deg); }
+#np-ll3 { opacity:0; animation: lf 0.45s 2.1s  cubic-bezier(0.34,1.56,0.64,1) forwards; transform-origin:90px 78px;  transform:scale(0) rotate(10deg); }
+/* Right leaves */
+#np-rl1 { opacity:0; animation: lf 0.45s 1.7s  cubic-bezier(0.34,1.56,0.64,1) forwards; transform-origin:90px 142px; transform:scale(0) rotate(-15deg); }
+#np-rl2 { opacity:0; animation: lf 0.45s 2.0s  cubic-bezier(0.34,1.56,0.64,1) forwards; transform-origin:90px 102px; transform:scale(0) rotate(-12deg); }
+#np-rl3 { opacity:0; animation: lf 0.45s 2.25s cubic-bezier(0.34,1.56,0.64,1) forwards; transform-origin:90px 64px;  transform:scale(0) rotate(-10deg); }
+/* Crown */
+#np-cl1 { opacity:0; animation: lf 0.5s 2.4s cubic-bezier(0.34,1.56,0.64,1) forwards; transform-origin:90px 22px; transform:scale(0) rotate(20deg); }
+#np-cl2 { opacity:0; animation: lf 0.5s 2.5s cubic-bezier(0.34,1.56,0.64,1) forwards; transform-origin:90px 22px; transform:scale(0) rotate(-20deg); }
+/* Bud */
+#np-bud {
+  opacity:0; transform-origin:90px 18px; transform:scale(0);
+  animation: lf 0.6s 2.65s cubic-bezier(0.34,1.56,0.64,1) forwards,
+             bud-pulse 2s 3.3s ease-in-out infinite;
+}
+#np-bud-ring {
+  opacity:0; transform-origin:90px 18px;
+  animation: ni-fadein 0.4s 2.9s forwards, bud-ring-pulse 2s 3.3s ease-in-out infinite;
+}
+@keyframes lf { to { opacity:1; transform:scale(1) rotate(0deg); } }
+@keyframes bud-pulse {
+  0%,100% { filter:drop-shadow(0 0 5px #22d77a); }
+  50%     { filter:drop-shadow(0 0 14px #22d77a) drop-shadow(0 0 24px rgba(34,215,122,0.6)); }
+}
+@keyframes bud-ring-pulse {
+  0%,100% { transform: scale(1);   opacity: 0.3; }
+  50%     { transform: scale(1.5); opacity: 0; }
+}
+
+/* Drops */
+.np-drop {
+  opacity: 0;
+  animation: drop-drip 1.4s 2.8s ease-in infinite;
+}
+@keyframes drop-drip {
+  0%   { opacity:0.9; transform:translateY(0); }
+  80%  { opacity:0.6; }
+  100% { opacity:0;   transform:translateY(26px); }
+}
+
+/* Sparks */
+.np-spark {
+  opacity: 0;
+  animation: spark-twinkle 2.2s 3s ease-in-out infinite;
+}
+@keyframes spark-twinkle {
+  0%,100% { opacity:0; transform:scale(0.4); }
+  50%     { opacity:1; transform:scale(1.6); }
+}
+
+/* ─── Titles ───────────────────────────────────────────────────── */
+#ni-eyebrow {
+  font-size: 0.7rem; letter-spacing: 0.26em; text-transform: uppercase;
+  color: rgba(34,215,122,0.55); font-family:'JetBrains Mono',monospace;
+  opacity: 0; transform: translateY(12px);
+  animation: ni-rise 0.8s 1.9s cubic-bezier(0.16,1,0.3,1) forwards;
+  text-shadow: 0 0 20px rgba(34,215,122,0.4);
+}
+
+#ni-h1 {
+  margin: 0; line-height: 1;
+  font-family: 'Playfair Display', 'Georgia', serif;
+  font-size: clamp(3.2rem, 8.5vw, 5.5rem);
+  font-weight: 900;
+  opacity: 0; transform: translateY(14px);
+  animation: ni-rise 0.9s 2.1s cubic-bezier(0.16,1,0.3,1) forwards;
+  letter-spacing: -0.02em;
+}
+#ni-h1-hydro {
+  background: linear-gradient(135deg, #eafff4 0%, #7effc5 30%, #22d77a 65%, #15a058 100%);
+  -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text;
+  filter: drop-shadow(0 0 30px rgba(34,215,122,0.3));
+}
+#ni-h1-ai {
+  background: linear-gradient(135deg, #a0d4ff 0%, #3b9dff 40%, #22e5e5 100%);
+  -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text;
+  filter: drop-shadow(0 0 30px rgba(59,157,255,0.3));
+}
+#ni-sub {
+  margin: 0; font-size: 0.76rem; letter-spacing: 0.18em;
+  text-transform: uppercase; color: rgba(120,200,165,0.5);
+  font-family: 'Inter',sans-serif;
+  opacity: 0; transform: translateY(10px);
+  animation: ni-rise 0.7s 2.4s cubic-bezier(0.16,1,0.3,1) forwards;
+}
+
+/* ─── Status row ───────────────────────────────────────────────── */
+#ni-status-row {
+  display: flex; align-items: center; gap: 14px;
+  opacity: 0; transform: translateY(8px);
+  animation: ni-rise 0.6s 3s forwards;
+  background: rgba(4,18,36,0.5);
+  border: 1px solid rgba(34,215,122,0.1);
+  border-radius: 100px;
+  padding: 8px 20px;
+  backdrop-filter: blur(8px);
+}
+.ni-stat { display:flex; align-items:center; gap:7px; font-size:0.7rem; color:rgba(180,220,205,0.55); font-family:'Inter',sans-serif; letter-spacing:0.05em; }
+.ni-stat-dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
+.ni-stat-dot.green { background:#22d77a; box-shadow:0 0 10px #22d77a,0 0 20px rgba(34,215,122,0.4); animation:dot-beat 1.4s ease-in-out infinite; }
+.ni-stat-dot.blue  { background:#3b9dff; box-shadow:0 0 10px #3b9dff,0 0 20px rgba(59,157,255,0.4);  animation:dot-beat 1.4s 0.5s ease-in-out infinite; }
+.ni-stat-dot.cyan  { background:#22e5e5; box-shadow:0 0 10px #22e5e5,0 0 20px rgba(34,229,229,0.4);  animation:dot-beat 1.4s 1s ease-in-out infinite; }
+@keyframes dot-beat { 0%,100%{opacity:1; transform:scale(1);} 50%{opacity:0.2; transform:scale(0.7);} }
+.ni-stat-divider { width:1px; height:16px; background:rgba(34,215,122,0.12); }
+
+/* ─── Enter button ─────────────────────────────────────────────── */
+#ni-btn {
+  position: relative; overflow: hidden;
+  display: flex; align-items: center; gap: 10px;
+  padding: 15px 50px; border-radius: 100px;
+  border: 1px solid rgba(34,215,122,0.4);
+  background: linear-gradient(135deg, rgba(34,215,122,0.09), rgba(59,157,255,0.07));
+  color: #e8f0fe; font-family:'Inter',sans-serif; font-size:0.94rem;
+  font-weight: 600; letter-spacing:0.06em; cursor:pointer;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 0 0 1px rgba(34,215,122,0.08) inset,
+              0 8px 40px rgba(0,0,0,0.5),
+              0 0 60px rgba(34,215,122,0.05);
+  opacity: 0; transform: translateY(10px);
+  animation: ni-rise 0.7s 3.5s cubic-bezier(0.16,1,0.3,1) forwards;
+  transition: background 0.4s, box-shadow 0.4s, transform 0.2s, border-color 0.4s;
+}
+#ni-btn::before {
+  content: '';
+  position: absolute; inset: 0;
+  background: linear-gradient(135deg, rgba(34,215,122,0.18), rgba(59,157,255,0.12));
+  opacity: 0; transition: opacity 0.4s;
+  border-radius: inherit;
+}
+#ni-btn:hover::before { opacity: 1; }
+#ni-btn:hover {
+  border-color: rgba(34,215,122,0.65);
+  box-shadow: 0 0 50px rgba(34,215,122,0.22), 0 0 15px rgba(59,157,255,0.1), 0 0 0 1px rgba(34,215,122,0.18) inset;
+  transform: translateY(-4px);
+}
+#ni-btn:active { transform: scale(0.97); }
+.ni-btn-icon { font-size:1.15rem; position:relative; z-index:1; animation: icon-sway 3s ease-in-out infinite; }
+@keyframes icon-sway { 0%,100%{transform:rotate(-5deg);} 50%{transform:rotate(5deg);} }
+.ni-btn-arrow { opacity:0.45; transition:opacity 0.3s, transform 0.3s; position:relative; z-index:1; }
+#ni-btn:hover .ni-btn-arrow { opacity:1; transform:translateX(6px); }
+.ni-btn-ripple {
+  position: absolute; top: 50%; left: 50%;
+  width: 0; height: 0; border-radius: 50%;
+  background: rgba(34,215,122,0.15);
+  transform: translate(-50%,-50%);
+  animation: btn-ripple 2.5s 4s ease-out infinite;
+}
+@keyframes btn-ripple {
+  0%   { width:0; height:0; opacity:0.6; }
+  100% { width:300px; height:300px; opacity:0; }
+}
+
+/* ─── Shared keyframes ─────────────────────────────────────────── */
+@keyframes ni-fadein { to { opacity:1; } }
+@keyframes ni-rise   { to { opacity:1; transform:translateY(0); } }
+
+/* ─── Exit ─────────────────────────────────────────────────────── */
+#ni.ni-out {
+  animation: ni-exit 1.4s cubic-bezier(0.4,0,0.2,1) forwards;
+}
+@keyframes ni-exit {
+  0%   { opacity:1; filter:blur(0px) brightness(1); }
+  40%  { opacity:0.9; filter:blur(1px) brightness(1.3); }
+  70%  { opacity:0.4; filter:blur(6px) brightness(0.8); }
+  100% { opacity:0; filter:blur(18px) brightness(0); pointer-events:none; }
+}
+
+/* ─── Mobile tweaks ────────────────────────────────────────────── */
+@media (max-width:480px) {
+  #ni-vines-tl, #ni-vines-tr, #ni-vines-bl, #ni-vines-br { width:180px; height:180px; }
+  .ni-ring-2, .ni-ring-3 { display:none; }
+  #ni-status-row { padding:6px 14px; gap:10px; }
+  .ni-stat { font-size:0.62rem; }
+  #ni-btn { padding:13px 36px; font-size:0.86rem; }
+}
+</style>
+
+<script>
+(function(){
+/* ═══════════════════════════════════════════════════════════════
+   ENHANCED AUDIO ENGINE — HydroAI Nature Intro
+═══════════════════════════════════════════════════════════════ */
+let AC, master, convReverb;
+const droneNodes = [];
+
+const getAC = () => {
+  if (!AC) {
+    AC = new (window.AudioContext||window.webkitAudioContext)();
+    master = AC.createGain();
+    master.gain.value = 0.5;
+    master.connect(AC.destination);
+    // Simple reverb via convolver
+    try {
+      convReverb = AC.createConvolver();
+      const len = AC.sampleRate * 2;
+      const rb = AC.createBuffer(2, len, AC.sampleRate);
+      for (let c=0;c<2;c++){
+        const d=rb.getChannelData(c);
+        for(let i=0;i<len;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/len,1.8);
+      }
+      convReverb.buffer = rb;
+      const rg = AC.createGain(); rg.gain.value = 0.18;
+      convReverb.connect(rg); rg.connect(master);
+    } catch(_){}
+  }
+  return AC;
+};
+
+const toReverb = (node) => {
+  if (convReverb) { try { node.connect(convReverb); } catch(_){} }
+};
+
+/* ── Deep forest drone ──────────────────────────────────────── */
+let streamNode;
+function startDrone() {
+  const a = getAC();
+  // Sub-bass resonant tone (forest floor)
+  [55, 82.5, 110, 165].forEach((f, i) => {
+    const o = a.createOscillator();
+    const g = a.createGain();
+    const lfo = a.createOscillator();
+    const lfoG = a.createGain();
+    lfo.frequency.value = 0.06 + i * 0.025;
+    lfo.type = 'sine';
+    lfoG.gain.value = 0.015;
+    lfo.connect(lfoG); lfoG.connect(g.gain);
+    o.connect(g); g.connect(master);
+    o.type = i < 2 ? 'sine' : 'triangle';
+    o.frequency.value = f;
+    const vol = [0.055, 0.03, 0.015, 0.008][i];
+    g.gain.setValueAtTime(0, a.currentTime);
+    g.gain.linearRampToValueAtTime(vol, a.currentTime + 3.5 + i * 0.8);
+    lfo.start(); o.start();
+    droneNodes.push(o, g, lfo);
+  });
+}
+
+/* ── Water stream ambience ───────────────────────────────────── */
+function startStream() {
+  const a = getAC();
+  const len = a.sampleRate * 4;
+  const buf = a.createBuffer(2, len, a.sampleRate);
+  for (let c=0;c<2;c++){
+    const d=buf.getChannelData(c);
+    let prev=0, prev2=0;
+    for(let i=0;i<len;i++){
+      prev  = 0.985*prev  + 0.015*(Math.random()*2-1);
+      prev2 = 0.997*prev2 + 0.003*(Math.random()*2-1);
+      d[i] = prev * 6 + prev2 * 2.5 + (Math.random()*2-1)*0.1;
+    }
+  }
+  const src = a.createBufferSource(); src.buffer=buf; src.loop=true;
+  const f1=a.createBiquadFilter(); f1.type='bandpass'; f1.frequency.value=450;  f1.Q.value=0.4;
+  const f2=a.createBiquadFilter(); f2.type='bandpass'; f2.frequency.value=900;  f2.Q.value=0.6;
+  const f3=a.createBiquadFilter(); f3.type='bandpass'; f3.frequency.value=1800; f3.Q.value=0.8;
+  const f4=a.createBiquadFilter(); f4.type='bandpass'; f4.frequency.value=3200; f4.Q.value=1.0;
+  const g1=a.createGain(); g1.gain.value=0.18;
+  const g2=a.createGain(); g2.gain.value=0.12;
+  const g3=a.createGain(); g3.gain.value=0.07;
+  const g4=a.createGain(); g4.gain.value=0.03;
+  src.connect(f1); f1.connect(g1); g1.connect(master);
+  src.connect(f2); f2.connect(g2); g2.connect(master);
+  src.connect(f3); f3.connect(g3); g3.connect(master);
+  src.connect(f4); f4.connect(g4); g4.connect(master);
+  toReverb(g2);
+  src.start();
+  streamNode = src;
+}
+
+/* ── Bubbles ────────────────────────────────────────────────── */
+function bubble(t=0) {
+  const a = getAC(); const now = a.currentTime + t;
+  const f0 = 400 + Math.random()*300;
+  const o = a.createOscillator(), g = a.createGain();
+  o.connect(g); g.connect(master);
+  o.type = 'sine';
+  o.frequency.setValueAtTime(f0, now);
+  o.frequency.exponentialRampToValueAtTime(f0 * 2.2, now + 0.05);
+  o.frequency.exponentialRampToValueAtTime(f0 * 0.6, now + 0.14);
+  g.gain.setValueAtTime(0, now);
+  g.gain.linearRampToValueAtTime(0.06, now + 0.01);
+  g.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+  o.start(now); o.stop(now + 0.2);
+}
+
+/* ── Drip (improved resonant) ───────────────────────────────── */
+function drip(t=0){
+  const a=getAC(); const now=a.currentTime+t;
+  // Primary pluck
+  const o=a.createOscillator(), g=a.createGain(), fl=a.createBiquadFilter();
+  o.connect(fl); fl.connect(g); g.connect(master);
+  o.type='sine'; o.frequency.setValueAtTime(1100+Math.random()*200, now);
+  o.frequency.exponentialRampToValueAtTime(280+Math.random()*80, now+0.18);
+  fl.type='bandpass'; fl.frequency.value=600+Math.random()*300; fl.Q.value=4;
+  g.gain.setValueAtTime(0, now);
+  g.gain.linearRampToValueAtTime(0.38, now+0.008);
+  g.gain.exponentialRampToValueAtTime(0.001, now+0.28);
+  o.start(now); o.stop(now+0.3);
+  toReverb(g);
+  // Overtone shimmer
+  const o2=a.createOscillator(), g2=a.createGain();
+  o2.connect(g2); g2.connect(master);
+  o2.type='sine'; o2.frequency.value=(1100+Math.random()*200)*2.01;
+  g2.gain.setValueAtTime(0, now+0.003);
+  g2.gain.linearRampToValueAtTime(0.09, now+0.015);
+  g2.gain.exponentialRampToValueAtTime(0.001, now+0.15);
+  o2.start(now+0.003); o2.stop(now+0.17);
+}
+
+/* ── Leaf rustle (richer) ────────────────────────────────────── */
+function rustle(t=0){
+  const a=getAC(); const now=a.currentTime+t;
+  const len=Math.floor(a.sampleRate*0.5);
+  const buf=a.createBuffer(2,len,a.sampleRate);
+  for(let c=0;c<2;c++){
+    const d=buf.getChannelData(c);
+    for(let i=0;i<len;i++) d[i]=(Math.random()*2-1)*Math.pow(Math.sin(Math.PI*i/len),0.55)*(0.9+0.1*Math.random());
+  }
+  const src=a.createBufferSource(); src.buffer=buf;
+  const f=a.createBiquadFilter(); f.type='highpass'; f.frequency.value=3500; f.Q.value=0.4;
+  const f2=a.createBiquadFilter(); f2.type='lowpass'; f2.frequency.value=10000;
+  const g=a.createGain();
+  src.connect(f); f.connect(f2); f2.connect(g); g.connect(master);
+  g.gain.setValueAtTime(0, now);
+  g.gain.linearRampToValueAtTime(0.28+Math.random()*0.1, now+0.035);
+  g.gain.setValueAtTime(0.28, now+0.2);
+  g.gain.exponentialRampToValueAtTime(0.001, now+0.5);
+  src.start(now); src.stop(now+0.55);
+  toReverb(g);
+}
+
+/* ── Wind layer ─────────────────────────────────────────────── */
+function startWind() {
+  const a = getAC();
+  const len = a.sampleRate * 3;
+  const buf = a.createBuffer(2, len, a.sampleRate);
+  for(let c=0;c<2;c++){
+    const d=buf.getChannelData(c);
+    let p=0;
+    for(let i=0;i<len;i++){
+      p=0.995*p+0.005*(Math.random()*2-1);
+      d[i]=p*12;
+    }
+  }
+  const src=a.createBufferSource(); src.buffer=buf; src.loop=true;
+  const f=a.createBiquadFilter(); f.type='bandpass'; f.frequency.value=200; f.Q.value=0.3;
+  const f2=a.createBiquadFilter(); f2.type='bandpass'; f2.frequency.value=340; f2.Q.value=0.5;
+  const g=a.createGain(); g.gain.setValueAtTime(0, a.currentTime);
+  g.gain.linearRampToValueAtTime(0.06, a.currentTime + 5);
+  const lfo=a.createOscillator(); lfo.frequency.value=0.12; lfo.type='sine';
+  const lfoG=a.createGain(); lfoG.gain.value=0.025;
+  lfo.connect(lfoG); lfoG.connect(g.gain);
+  src.connect(f); f.connect(g);
+  src.connect(f2); f2.connect(g);
+  g.connect(master);
+  lfo.start(); src.start();
+  droneNodes.push(src, g, lfo);
+}
+
+/* ── Cricket ambience ───────────────────────────────────────── */
+function cricket(t=0) {
+  const a = getAC(); const now = a.currentTime + t;
+  const f = 3800 + Math.random()*500;
+  for(let k=0;k<3;k++){
+    const off = now + k * 0.045;
+    const o=a.createOscillator(), g=a.createGain();
+    o.connect(g); g.connect(master);
+    o.type='sine'; o.frequency.value=f*(1+k*0.003);
+    g.gain.setValueAtTime(0, off);
+    g.gain.linearRampToValueAtTime(0.025, off+0.005);
+    g.gain.exponentialRampToValueAtTime(0.001, off+0.04);
+    o.start(off); o.stop(off+0.05);
+  }
+}
+
+/* ── Bird (two types) ────────────────────────────────────────── */
+function birdTweet(t=0){
+  const a=getAC();
+  [[3200,3700,0.09],[3700,4300,0.09],[4000,3600,0.08],[3400,3900,0.08]].forEach(([f0,f1,v],i)=>{
+    const off=a.currentTime+t+i*0.11;
+    const o=a.createOscillator(),g=a.createGain(),vib=a.createOscillator(),vibG=a.createGain();
+    vib.frequency.value=10; vib.type='sine'; vibG.gain.value=35;
+    vib.connect(vibG); vibG.connect(o.frequency);
+    o.connect(g); g.connect(master);
+    o.type='sine';
+    o.frequency.setValueAtTime(f0*0.95, off);
+    o.frequency.linearRampToValueAtTime(f1, off+0.07);
+    o.frequency.linearRampToValueAtTime(f1*0.88, off+0.12);
+    g.gain.setValueAtTime(0, off);
+    g.gain.linearRampToValueAtTime(v, off+0.012);
+    g.gain.exponentialRampToValueAtTime(0.001, off+0.14);
+    vib.start(off); o.start(off);
+    vib.stop(off+0.16); o.stop(off+0.16);
+    toReverb(g);
+  });
+}
+function birdWarble(t=0){
+  const a=getAC();
+  const freqs=[[2200,2600],[2600,2100],[2400,2800],[2800,2200],[2500,2700]];
+  freqs.forEach(([f0,f1],i)=>{
+    const off=a.currentTime+t+i*0.13;
+    const o=a.createOscillator(),g=a.createGain();
+    o.connect(g); g.connect(master); toReverb(g);
+    o.type='sine';
+    o.frequency.setValueAtTime(f0, off);
+    o.frequency.linearRampToValueAtTime(f1, off+0.1);
+    g.gain.setValueAtTime(0, off);
+    g.gain.linearRampToValueAtTime(0.06, off+0.015);
+    g.gain.exponentialRampToValueAtTime(0.001, off+0.15);
+    o.start(off); o.stop(off+0.17);
+  });
+}
+
+/* ── Stem growing ────────────────────────────────────────────── */
+// Plays as the stem draws upward (1.6s duration from t=0.5)
+function stemGrow(t=0){
+  const a=getAC(); const now=a.currentTime+t;
+  const dur=1.65;
+
+  // Organic rising tone — like a vine creeping (very low, slowly rising)
+  const o=a.createOscillator(), g=a.createGain();
+  o.connect(g); g.connect(master); toReverb(g);
+  o.type='triangle';
+  o.frequency.setValueAtTime(60, now);
+  o.frequency.linearRampToValueAtTime(180, now+dur*0.6);
+  o.frequency.linearRampToValueAtTime(220, now+dur);
+  g.gain.setValueAtTime(0, now);
+  g.gain.linearRampToValueAtTime(0.055, now+0.18);
+  g.gain.setValueAtTime(0.055, now+dur*0.7);
+  g.gain.linearRampToValueAtTime(0, now+dur);
+  o.start(now); o.stop(now+dur+0.05);
+
+  // Soft woody texture (filtered short burst noise repeated)
+  for(let k=0;k<6;k++){
+    const off=now+k*(dur/6)*0.85;
+    const len=Math.floor(a.sampleRate*0.12);
+    const buf=a.createBuffer(1,len,a.sampleRate);
+    const d=buf.getChannelData(0);
+    for(let i=0;i<len;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/len,1.2);
+    const src=a.createBufferSource(); src.buffer=buf;
+    const f=a.createBiquadFilter(); f.type='bandpass';
+    f.frequency.value=200+k*60; f.Q.value=2;
+    const gn=a.createGain(); gn.gain.value=0.045-k*0.005;
+    src.connect(f); f.connect(gn); gn.connect(master);
+    src.start(off); src.stop(off+0.14);
+  }
+
+  // Gentle water-celery creak (high overtone shimmer as stem forms)
+  const o2=a.createOscillator(), g2=a.createGain();
+  o2.connect(g2); g2.connect(master);
+  o2.type='sine';
+  o2.frequency.setValueAtTime(520, now+0.1);
+  o2.frequency.linearRampToValueAtTime(780, now+dur*0.5);
+  o2.frequency.linearRampToValueAtTime(660, now+dur);
+  g2.gain.setValueAtTime(0, now+0.1);
+  g2.gain.linearRampToValueAtTime(0.022, now+0.3);
+  g2.gain.linearRampToValueAtTime(0.012, now+dur*0.8);
+  g2.gain.linearRampToValueAtTime(0, now+dur);
+  o2.start(now+0.1); o2.stop(now+dur+0.05);
+}
+
+/* ── Plant sprout cue ────────────────────────────────────────── */
+function plantSproutCue(t=0){
+  const a=getAC(); const now=a.currentTime+t;
+
+  // Short soft burst that marks the first moment the plant comes alive.
+  const len=Math.floor(a.sampleRate*0.18);
+  const buf=a.createBuffer(1,len,a.sampleRate);
+  const d=buf.getChannelData(0);
+  for(let i=0;i<len;i++){
+    const env=Math.pow(1-i/len,1.7);
+    d[i]=(Math.random()*2-1)*env;
+  }
+  const src=a.createBufferSource(); src.buffer=buf;
+  const hp=a.createBiquadFilter(); hp.type='highpass'; hp.frequency.value=900; hp.Q.value=0.4;
+  const lp=a.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=3800;
+  const gn=a.createGain(); gn.gain.value=0;
+  src.connect(hp); hp.connect(lp); lp.connect(gn); gn.connect(master);
+  gn.gain.setValueAtTime(0, now);
+  gn.gain.linearRampToValueAtTime(0.09, now+0.01);
+  gn.gain.exponentialRampToValueAtTime(0.001, now+0.2);
+  src.start(now); src.stop(now+0.22);
+  toReverb(gn);
+
+  // Gentle resonant ping so the sprout feels like a single organic event.
+  const o=a.createOscillator(), g=a.createGain();
+  o.type='sine'; o.frequency.setValueAtTime(240, now);
+  o.frequency.linearRampToValueAtTime(520, now+0.16);
+  o.connect(g); g.connect(master); toReverb(g);
+  g.gain.setValueAtTime(0, now);
+  g.gain.linearRampToValueAtTime(0.04, now+0.015);
+  g.gain.exponentialRampToValueAtTime(0.001, now+0.24);
+  o.start(now); o.stop(now+0.26);
+}
+
+/* ── Leaf unfurl ─────────────────────────────────────────────── */
+// Called for each leaf; size 1=small, 2=medium, 3=large
+function leafUnfurl(t=0, size=2){
+  const a=getAC(); const now=a.currentTime+t;
+
+  // Organic "fwip" — burst of high-passed noise shaped into a pop
+  const len=Math.floor(a.sampleRate*0.22);
+  const buf=a.createBuffer(2,len,a.sampleRate);
+  for(let c=0;c<2;c++){
+    const d=buf.getChannelData(c);
+    for(let i=0;i<len;i++){
+      const env=Math.pow(Math.sin(Math.PI*i/len), 0.4) * Math.exp(-i/(len*0.35));
+      d[i]=(Math.random()*2-1)*env;
+    }
+  }
+  const src=a.createBufferSource(); src.buffer=buf;
+  const hp=a.createBiquadFilter(); hp.type='highpass'; hp.frequency.value=1800-size*150; hp.Q.value=0.5;
+  const lp=a.createBiquadFilter(); lp.type='lowpass';  lp.frequency.value=7000+size*400;
+  const gn=a.createGain(); gn.gain.value=0.18+size*0.04;
+  src.connect(hp); hp.connect(lp); lp.connect(gn); gn.connect(master);
+  src.start(now); src.stop(now+0.24);
+  toReverb(gn);
+
+  // Resonant tonal "ping" on the fwip attack
+  const freq=[420, 360, 300][size-1] || 360;
+  const o=a.createOscillator(), g=a.createGain();
+  o.connect(g); g.connect(master);
+  o.type='sine'; o.frequency.value=freq*(0.95+Math.random()*0.1);
+  g.gain.setValueAtTime(0, now);
+  g.gain.linearRampToValueAtTime(0.06+size*0.015, now+0.006);
+  g.gain.exponentialRampToValueAtTime(0.001, now+0.22);
+  o.start(now); o.stop(now+0.25);
+  toReverb(g);
+
+  // Tiny high shimmer on release (sap spring-back)
+  const o2=a.createOscillator(), g2=a.createGain();
+  o2.connect(g2); g2.connect(master);
+  o2.type='sine'; o2.frequency.value=freq*3.2*(0.96+Math.random()*0.08);
+  g2.gain.setValueAtTime(0, now+0.04);
+  g2.gain.linearRampToValueAtTime(0.025, now+0.055);
+  g2.gain.exponentialRampToValueAtTime(0.001, now+0.18);
+  o2.start(now+0.04); o2.stop(now+0.2);
+}
+
+/* ── Bud bloom ───────────────────────────────────────────────── */
+// Crystalline sparkle when the glowing bud appears at top
+function budBloom(t=0){
+  const a=getAC(); const now=a.currentTime+t;
+
+  // Rising crystal tones (like ice forming / light crystallizing)
+  [1047,1319,1568,2093,2637].forEach((f,i)=>{
+    const off=now+i*0.055;
+    const o=a.createOscillator(), g=a.createGain();
+    o.connect(g); g.connect(master); toReverb(g);
+    o.type='sine'; o.frequency.setValueAtTime(f*0.88, off);
+    o.frequency.linearRampToValueAtTime(f, off+0.04);
+    g.gain.setValueAtTime(0, off);
+    g.gain.linearRampToValueAtTime(0.1-i*0.012, off+0.012);
+    g.gain.exponentialRampToValueAtTime(0.001, off+0.8+i*0.1);
+    o.start(off); o.stop(off+1.0);
+    // Bright shimmer partial
+    const o2=a.createOscillator(), g2=a.createGain();
+    o2.connect(g2); g2.connect(master);
+    o2.type='sine'; o2.frequency.value=f*2.003;
+    g2.gain.setValueAtTime(0, off+0.008);
+    g2.gain.linearRampToValueAtTime(0.025, off+0.02);
+    g2.gain.exponentialRampToValueAtTime(0.001, off+0.3);
+    o2.start(off+0.008); o2.stop(off+0.35);
+  });
+
+  // Soft "life awakening" low swell under the sparkle
+  const o=a.createOscillator(), g=a.createGain();
+  o.connect(g); g.connect(master); toReverb(g);
+  o.type='triangle'; o.frequency.value=131;
+  g.gain.setValueAtTime(0, now);
+  g.gain.linearRampToValueAtTime(0.04, now+0.15);
+  g.gain.exponentialRampToValueAtTime(0.001, now+1.4);
+  o.start(now); o.stop(now+1.5);
+}
+
+/* ── Sensor ping ────────────────────────────────────────────── */
+function sensorPing(t=0, tone=880){
+  const a=getAC(); const now=a.currentTime+t;
+  const o=a.createOscillator(),g=a.createGain();
+  o.connect(g); g.connect(master); toReverb(g);
+  o.type='sine'; o.frequency.setValueAtTime(tone*0.98, now);
+  o.frequency.linearRampToValueAtTime(tone, now+0.02);
+  g.gain.setValueAtTime(0, now);
+  g.gain.linearRampToValueAtTime(0.12, now+0.015);
+  g.gain.exponentialRampToValueAtTime(0.001, now+0.35);
+  o.start(now); o.stop(now+0.4);
+}
+
+/* ── Chime on enter (ascending chord arpeggio with tail) ──── */
+function chime(){
+  const a=getAC();
+  // Major pentatonic: C5 E5 G5 B5 C6
+  [523,659,784,988,1047].forEach((f,i)=>{
+    const t=a.currentTime+i*0.08;
+    // Fundamental
+    const o=a.createOscillator(),g=a.createGain();
+    o.connect(g); g.connect(master); toReverb(g);
+    o.type='sine'; o.frequency.value=f;
+    g.gain.setValueAtTime(0,t);
+    g.gain.linearRampToValueAtTime(0.2,t+0.012);
+    g.gain.exponentialRampToValueAtTime(0.001,t+1.5);
+    o.start(t); o.stop(t+1.6);
+    // 2nd harmonic
+    const o2=a.createOscillator(),g2=a.createGain();
+    o2.connect(g2); g2.connect(master);
+    o2.type='sine'; o2.frequency.value=f*2.005;
+    g2.gain.setValueAtTime(0,t+0.008);
+    g2.gain.linearRampToValueAtTime(0.06,t+0.022);
+    g2.gain.exponentialRampToValueAtTime(0.001,t+0.55);
+    o2.start(t+0.008); o2.stop(t+0.6);
+    // Sub bell
+    const o3=a.createOscillator(),g3=a.createGain();
+    o3.connect(g3); g3.connect(master);
+    o3.type='sine'; o3.frequency.value=f*0.5;
+    g3.gain.setValueAtTime(0,t);
+    g3.gain.linearRampToValueAtTime(0.04,t+0.02);
+    g3.gain.exponentialRampToValueAtTime(0.001,t+0.9);
+    o3.start(t); o3.stop(t+1.0);
+  });
+  // Final warm sustained chord
+  [523,659,784].forEach((f,i)=>{
+    const t=a.currentTime+0.5+i*0.04;
+    const o=a.createOscillator(),g=a.createGain();
+    o.connect(g); g.connect(master); toReverb(g);
+    o.type='triangle'; o.frequency.value=f;
+    g.gain.setValueAtTime(0,t);
+    g.gain.linearRampToValueAtTime(0.05,t+0.05);
+    g.gain.exponentialRampToValueAtTime(0.001,t+2.2);
+    o.start(t); o.stop(t+2.4);
+  });
+}
+
+/* ── Schedule ────────────────────────────────────────────────── */
+let started=false;
+let autoAttempted=false;
+function go(fromUser=false){
+  if(started)return;
+  const a=getAC();
+  if(!fromUser){
+    if(autoAttempted)return;
+    autoAttempted=true;
+    if(a.state==='suspended') return;
+  } else {
+    try{ if(a.state==='suspended') a.resume(); } catch(_){}
+  }
+  started=true;
+  try{
+    startDrone();
+    startStream();
+    startWind();
+    // Bubbles
+    [1.2,2.0,3.1,4.5,6.0,7.8,9.5,12,15,18].forEach(t=>bubble(t));
+    // Drips
+    [0.7,1.5,2.3,3.4,4.8,6.5,8.0,10.5,13,16].forEach(t=>drip(t));
+    // ── PLANT FORMATION SOUNDS ──────────────────────────────
+    plantSproutCue(0.35);
+    // Stem draws from 0.5s → 2.1s
+    stemGrow(0.5);
+    // Each leaf unfurls — matched to CSS animation-delay values
+    leafUnfurl(1.55, 2);   // np-ll1 left
+    leafUnfurl(1.7,  2);   // np-rl1 right
+    leafUnfurl(1.85, 2);   // np-ll2 left
+    leafUnfurl(2.0,  2);   // np-rl2 right
+    leafUnfurl(2.1,  1);   // np-ll3 left (high, smaller)
+    leafUnfurl(2.25, 1);   // np-rl3 right
+    leafUnfurl(2.4,  3);   // np-cl1 crown (biggest)
+    leafUnfurl(2.5,  3);   // np-cl2 crown
+    // Bud sparkling into existence
+    budBloom(2.65);
+    // ─────────────────────────────────────────────────────────
+    // Ambient rustles layered under the leaf sounds
+    [1.4,1.7,2.0,2.15,2.3,2.45,2.6,3.0].forEach(t=>rustle(t));
+    // Crickets
+    [2.5,3.5,4.2,5.5,7.0,9.0,12,15].forEach(t=>cricket(t));
+    // Birds
+    [3.6,6.5,11.0,15.5].forEach(t=>birdTweet(t));
+    [5.0,9.5,14.0].forEach(t=>birdWarble(t));
+    // Sensor pings (as status row appears at ~3s)
+    sensorPing(3.1, 880);
+    sensorPing(3.4, 1047);
+    sensorPing(3.7, 1175);
+  }catch(e){console.warn('Audio:',e);}
+}
+document.getElementById('ni').addEventListener('pointerdown',()=>go(true),{once:true});
+setTimeout(()=>go(false),200);
+
+/* ═══════════════════════════════════════════════════════════════
+   CANVAS — THREE LAYERS
+   bg: star field + aurora glow
+   fx: fireflies + pollen
+   rain: rain droplets
+═══════════════════════════════════════════════════════════════ */
+const bgC=document.getElementById('ni-bg');
+const fxC=document.getElementById('ni-fx');
+const rainC=document.getElementById('ni-rain');
+const bgX=bgC.getContext('2d');
+const fxX=fxC.getContext('2d');
+const rainX=rainC.getContext('2d');
+
+function resize(){
+  bgC.width=fxC.width=rainC.width=innerWidth;
+  bgC.height=fxC.height=rainC.height=innerHeight;
+}
+resize(); addEventListener('resize',resize);
+
+/* Stars */
+const stars=Array.from({length:110},()=>({
+  x:Math.random()*innerWidth, y:Math.random()*innerHeight*0.75,
+  r:Math.random()*1.2+0.2, a:Math.random()*0.55+0.1,
+  twinkle:Math.random()*Math.PI*2, ts:0.008+Math.random()*0.028,
+  col: Math.random()>0.7?'180,240,200':Math.random()>0.5?'200,220,255':'220,240,215',
+}));
+
+/* Fireflies */
+const flies=Array.from({length:50},()=>({
+  x:Math.random()*innerWidth, y:Math.random()*innerHeight,
+  vx:(Math.random()-0.5)*0.45, vy:-Math.random()*0.55-0.08,
+  r:Math.random()*2.4+0.7, a:Math.random()*0.75+0.15,
+  tw:Math.random()*Math.PI*2, ts:0.02+Math.random()*0.05,
+  col:Math.random()>0.5?'34,215,122':Math.random()>0.5?'59,157,255':'100,240,160',
+  wander: (Math.random()-0.5)*0.008,
+}));
+
+/* Pollen */
+const pollen=Array.from({length:35},()=>({
+  x:Math.random()*innerWidth, y:Math.random()*innerHeight,
+  vx:(Math.random()-0.5)*0.22, vy:-Math.random()*0.25-0.04,
+  r:Math.random()*1.3+0.3, a:0.12+Math.random()*0.28,
+  wander: (Math.random()-0.5)*0.005,
+}));
+
+/* Rain droplets */
+const drops=Array.from({length:80},()=>({
+  x:Math.random()*innerWidth, y:Math.random()*innerHeight,
+  vy:1.5+Math.random()*3,
+  len:8+Math.random()*14,
+  a:0.05+Math.random()*0.12,
+}));
+
+/* Aurora */
+let auroraT=0;
+function drawBg(){
+  bgX.clearRect(0,0,bgC.width,bgC.height);
+  const h=bgC.height;
+  // 5 aurora ribbons
+  const ribbons=[
+    {off:0,    cols:['rgba(34,215,122,0)','rgba(34,215,122,0.05)','rgba(34,215,122,0)'],  spd:0.3, amp:20},
+    {off:110,  cols:['rgba(59,157,255,0)','rgba(59,157,255,0.04)','rgba(59,157,255,0)'],  spd:0.45,amp:16},
+    {off:200,  cols:['rgba(34,229,229,0)','rgba(34,229,229,0.03)','rgba(34,229,229,0)'],  spd:0.25,amp:22},
+    {off:55,   cols:['rgba(100,215,100,0)','rgba(100,215,100,0.03)','rgba(100,215,100,0)'],spd:0.6,amp:14},
+    {off:160,  cols:['rgba(80,160,255,0)','rgba(80,160,255,0.025)','rgba(80,160,255,0)'],  spd:0.35,amp:18},
+  ];
+  ribbons.forEach((rb,l)=>{
+    bgX.beginPath();
+    bgX.moveTo(0, h*0.12+rb.off);
+    for(let x=0;x<=bgC.width;x+=6){
+      const y=h*0.12+rb.off
+        +Math.sin(x/200+auroraT*rb.spd+l*0.8)*rb.amp
+        +Math.sin(x/100+auroraT*rb.spd*1.4+l)*rb.amp*0.5;
+      bgX.lineTo(x,y);
+    }
+    bgX.lineTo(bgC.width,0); bgX.lineTo(0,0); bgX.closePath();
+    const g=bgX.createLinearGradient(0,0,bgC.width,0);
+    g.addColorStop(0,rb.cols[0]); g.addColorStop(0.5,rb.cols[1]); g.addColorStop(1,rb.cols[2]);
+    bgX.fillStyle=g; bgX.fill();
+  });
+  // Stars
+  stars.forEach(s=>{
+    s.twinkle+=s.ts;
+    const a=s.a*(0.45+0.55*Math.sin(s.twinkle));
+    bgX.beginPath(); bgX.arc(s.x,s.y,s.r,0,Math.PI*2);
+    bgX.fillStyle=`rgba(${s.col},${a})`; bgX.fill();
+    if(s.r>0.9 && a>0.3){
+      // Star cross glint
+      bgX.beginPath();
+      bgX.moveTo(s.x-s.r*3,s.y); bgX.lineTo(s.x+s.r*3,s.y);
+      bgX.moveTo(s.x,s.y-s.r*3); bgX.lineTo(s.x,s.y+s.r*3);
+      bgX.strokeStyle=`rgba(${s.col},${a*0.3})`;
+      bgX.lineWidth=0.5; bgX.stroke();
+    }
+  });
+  auroraT+=0.007;
+}
+
+function drawFx(){
+  fxX.clearRect(0,0,fxC.width,fxC.height);
+  flies.forEach(f=>{
+    f.tw+=f.ts;
+    f.vx+=f.wander*(Math.random()-0.5)*2;
+    f.vx*=0.98;
+    f.x+=f.vx; f.y+=f.vy;
+    if(f.y<-5){f.y=fxC.height+5;f.x=Math.random()*fxC.width;}
+    if(f.x<-5)f.x=fxC.width+5; if(f.x>fxC.width+5)f.x=-5;
+    const a=f.a*(0.35+0.65*Math.abs(Math.sin(f.tw)));
+    const grd=fxX.createRadialGradient(f.x,f.y,0,f.x,f.y,f.r*4.5);
+    grd.addColorStop(0,`rgba(${f.col},${a})`);
+    grd.addColorStop(0.5,`rgba(${f.col},${a*0.4})`);
+    grd.addColorStop(1,`rgba(${f.col},0)`);
+    fxX.beginPath(); fxX.arc(f.x,f.y,f.r*4.5,0,Math.PI*2);
+    fxX.fillStyle=grd; fxX.fill();
+    // Core dot
+    fxX.beginPath(); fxX.arc(f.x,f.y,f.r,0,Math.PI*2);
+    fxX.fillStyle=`rgba(${f.col},${Math.min(1,a*1.8)})`; fxX.fill();
+  });
+  pollen.forEach(p=>{
+    p.vx+=p.wander*(Math.random()-0.5)*2; p.vx*=0.98;
+    p.x+=p.vx; p.y+=p.vy;
+    if(p.y<-4){p.y=fxC.height+4;p.x=Math.random()*fxC.width;}
+    fxX.beginPath(); fxX.arc(p.x,p.y,p.r,0,Math.PI*2);
+    fxX.fillStyle=`rgba(200,245,160,${p.a})`; fxX.fill();
+  });
+}
+
+function drawRain(){
+  rainX.clearRect(0,0,rainC.width,rainC.height);
+  drops.forEach(d=>{
+    d.y+=d.vy;
+    if(d.y>rainC.height+20){d.y=-20;d.x=Math.random()*rainC.width;}
+    rainX.beginPath();
+    rainX.moveTo(d.x, d.y);
+    rainX.lineTo(d.x-d.vy*0.15, d.y-d.len);
+    rainX.strokeStyle=`rgba(100,200,255,${d.a})`;
+    rainX.lineWidth=0.7;
+    rainX.stroke();
+  });
+}
+
+let raf;
+function loop(){ drawBg(); drawFx(); drawRain(); raf=requestAnimationFrame(loop); }
+loop();
+
+/* ═══════════════════════════════════════════════════════════════
+   ENTER BUTTON
+═══════════════════════════════════════════════════════════════ */
+document.getElementById('ni-btn').addEventListener('click',()=>{
+  try{chime();}catch(_){}
+  // Fade out ambience
+  if(master){
+    try{
+      master.gain.setValueAtTime(master.gain.value,AC.currentTime);
+      master.gain.linearRampToValueAtTime(0,AC.currentTime+1.2);
+      setTimeout(()=>{
+        try{streamNode&&streamNode.stop();}catch(_){}
+        droneNodes.forEach(n=>{try{n.stop?n.stop():null;}catch(_){}});
+      },1300);
+    }catch(_){}
+  }
+  const el=document.getElementById('ni');
+  el.classList.add('ni-out');
+  cancelAnimationFrame(raf);
+  setTimeout(()=>el.remove(),1500);
+});
+})();
+</script>
+
+
+
+<!-- ════════════════════════════════════════════════════════════
+     HEADER
+════════════════════════════════════════════════════════════ -->
+<header>
+  <div class="header-inner">
+    <div class="logo">
+      <div class="logo-icon">🌿</div>
+      <div>
+        <div class="logo-text">HydroAI</div>
+        <div class="logo-sub">Smart Hydroponic System</div>
+      </div>
+    </div>
+
+    <div class="header-right">
+      <div class="status-badge">
+        <div class="status-dot" id="connection-dot"></div>
+        <span id="connection-status">Live</span>
+      </div>
+      <div id="last-update">—</div>
+      <button class="settings-btn" id="open-settings" onclick="openSettings()" title="Plant Settings" aria-label="Open plant settings">
+        ⚙️ Settings
+      </button>
+    </div>
+  </div>
+</header>
+
+<!-- ════════════════════════════════════════════════════════════
+     MAIN CONTENT
+════════════════════════════════════════════════════════════ -->
+<main>
+
+  <!-- ════════════════════════════════════
+       PLANT CONFIGURATION PANEL
+  ════════════════════════════════════ -->
+  <div class="plant-panel card" id="plant-panel">
+    <div class="plant-panel-left">
+      <div class="plant-emoji-display" id="plant-emoji">🥬</div>
+      <div class="plant-info">
+        <div class="plant-panel-label">Active Plant Profile</div>
+        <div class="plant-name-display" id="plant-name-display">Lettuce</div>
+        <div class="plant-selector-wrap">
+          <select id="plant-selector" onchange="selectPlant(this.value)" aria-label="Select plant type">
+            <option value="">Loading plants…</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="plant-conditions" id="plant-conditions">
+      <div class="cond-pill temp" id="cond-temp">🌡️ —</div>
+      <div class="cond-pill hum" id="cond-hum">💧 —</div>
+      <div class="cond-pill ph" id="cond-ph-pill">⚗️ —</div>
+      <div class="cond-pill tds" id="cond-tds-pill">🧪 —</div>
+    </div>
+
+    <button class="btn-settings" onclick="openSettings()" title="Edit plant conditions">
+      ⚙️ Settings
+    </button>
+  </div>
+
+  <!-- Plant Alerts Feed -->
+  <div id="plant-alerts-container" style="display:none; margin-bottom:1rem;">
+    <div class="section-title" style="margin:0 0 0.5rem;">🚨 Plant Alerts</div>
+    <div id="plant-alerts-feed" style="display:flex; flex-direction:column; gap:0.4rem;"></div>
+  </div>
+
+  <!-- ── Section A: Top Row (Air Temp, Humidity, Water Temp) ─── -->
+  <p class="section-title">Environment Sensors</p>
+  <div class="sensor-grid-top" role="region" aria-label="Environment sensor readings">
+
+    <!-- Air Temperature -->
+    <div class="card sensor-card theme-orange" id="card-air-temp">
+      <button class="sensor-edit-btn" onclick="openSettings('sec-temp')" title="Edit temperature thresholds">✏️ Edit</button>
+      <div class="sensor-icon-wrap">🌡️</div>
+      <div class="sensor-label">Air Temperature</div>
+      <div class="sensor-value" id="air-temp">—<span class="sensor-unit">°C</span></div>
+      <div class="sensor-bar-wrap"><div class="sensor-bar" id="bar-air-temp" style="width:0%"></div></div>
+    </div>
+
+    <!-- Humidity -->
+    <div class="card sensor-card theme-cyan" id="card-humidity">
+      <button class="sensor-edit-btn" onclick="openSettings('sec-hum')" title="Edit humidity thresholds">✏️ Edit</button>
+      <div class="sensor-icon-wrap">💧</div>
+      <div class="sensor-label">Humidity</div>
+      <div class="sensor-value" id="humidity">—<span class="sensor-unit">%</span></div>
+      <div class="sensor-bar-wrap"><div class="sensor-bar" id="bar-humidity" style="width:0%"></div></div>
+    </div>
+
+    <!-- Water Temperature -->
+    <div class="card sensor-card theme-blue" id="card-water-temp">
+      <button class="sensor-edit-btn" onclick="openSettings('sec-wt')" title="Edit water temperature thresholds">✏️ Edit</button>
+      <div class="sensor-icon-wrap">🌊</div>
+      <div class="sensor-label">Water Temperature</div>
+      <div class="sensor-value" id="water-temp">—<span class="sensor-unit">°C</span></div>
+      <div class="sensor-bar-wrap"><div class="sensor-bar" id="bar-water-temp" style="width:0%"></div></div>
+    </div>
+  </div>
+
+  <!-- ── Section B: Middle Row (pH, TDS, Water Level, Sunlight) ─ -->
+  <p class="section-title" style="margin-top:1.5rem;">Water & Light Quality</p>
+  <div class="sensor-grid-mid" role="region" aria-label="Water and light quality sensor readings">
+
+    <!-- pH -->
+    <div class="card sensor-card theme-purple" id="card-ph">
+      <button class="sensor-edit-btn" onclick="openSettings('sec-ph')" title="Edit pH thresholds">✏️ Edit</button>
+      <div class="sensor-icon-wrap">⚗️</div>
+      <div class="sensor-label">pH Level</div>
+      <div class="sensor-value" id="ph-value">—</div>
+      <div class="sensor-bar-wrap"><div class="sensor-bar" id="bar-ph" style="width:0%"></div></div>
+    </div>
+
+    <!-- TDS -->
+    <div class="card sensor-card theme-green" id="card-tds">
+      <button class="sensor-edit-btn" onclick="openSettings('sec-tds')" title="Edit TDS thresholds">✏️ Edit</button>
+      <div class="sensor-icon-wrap">🧪</div>
+      <div class="sensor-label">TDS / Nutrients</div>
+      <div class="sensor-value" id="tds-value">—<span class="sensor-unit">ppm</span></div>
+      <div class="sensor-bar-wrap"><div class="sensor-bar" id="bar-tds" style="width:0%"></div></div>
+    </div>
+
+    <!-- Water Level -->
+    <div class="card sensor-card theme-blue" id="card-water-level">
+      <button class="sensor-edit-btn" onclick="openSettings('sec-wl')" title="Edit water level threshold">✏️ Edit</button>
+      <div class="sensor-icon-wrap">🪣</div>
+      <div class="sensor-label">Water Level</div>
+      <div class="sensor-value" id="water-level">—<span class="sensor-unit">%</span></div>
+      <div class="sensor-bar-wrap"><div class="sensor-bar" id="bar-water-level" style="width:0%"></div></div>
+    </div>
+
+    <!-- Sunlight -->
+    <div class="card sensor-card theme-yellow" id="card-sunlight">
+      <button class="sensor-edit-btn" onclick="openSettings('sec-sun')" title="Edit sunlight thresholds">✏️ Edit</button>
+      <div class="sensor-icon-wrap">☀️</div>
+      <div class="sensor-label">Sunlight</div>
+      <div class="sensor-value" id="sunlight-value">—<span class="sensor-unit">%</span></div>
+      <div class="sensor-bar-wrap"><div class="sensor-bar" id="bar-sunlight" style="width:0%"></div></div>
+    </div>
+  </div>
+
+  <!-- ── Sunlight / Shed Auto-Close Alert Banner ──────────────── -->
+  <div id="shed-alert" role="alert">
+    <span class="shed-alert-icon">☀️</span>
+    <div>
+      <strong>Shade System Active</strong> —
+      <span id="shed-alert-msg">Intense sunlight detected. Shed has automatically closed to protect plants.</span>
+    </div>
+  </div>
+
+  <!-- ── Section C/D/E: Bottom Grid ──────────────────────────── -->
+  <p class="section-title" style="margin-top:0.25rem;">Control & AI Monitoring</p>
+  <div class="bottom-grid">
+
+    <!-- Controls + Shed (Autonomous Mode) -->
+    <div class="controls-panel">
+
+      <div class="card" style="padding: 1.25rem 1.25rem 0.75rem;">
+        <div class="panel-header" style="align-items: center; justify-content: space-between;">
+          <span>⚡ Actuator Controls</span>
+          
+          <div style="display: flex; align-items: center; gap: 0.5rem; background: rgba(56,148,255,0.05); padding: 4px 8px; border-radius: 20px; border: 1px solid rgba(56,148,255,0.15);">
+            <span style="font-size: 0.75rem; color: var(--text-secondary); font-weight: 600;">System Mode:</span>
+            <label class="toggle" onclick="event.stopPropagation()">
+              <input type="checkbox" id="toggle-auto-mode" onchange="toggleAutoMode(this.checked)" checked />
+              <span class="toggle-slider"></span>
+            </label>
+            <span id="auto-mode-label" style="font-size: 0.75rem; color: var(--accent-green); font-weight: 700;">Auto</span>
+          </div>
+        </div>
+        <p style="font-size:0.72rem; color:var(--text-muted); margin-bottom:1rem;">Auto mode: ESP32 runs autonomously. Manual mode: You have full control.</p>
+
+        <!-- Pump (always on, locked) -->
+        <div class="control-row pump-locked" id="row-pump" title="Pump always runs continuously — cannot be turned off">
+          <div class="control-info">
+            <div class="control-icon">💧</div>
+            <div>
+              <div class="control-name">Water Pump
+                <span class="auto-badge always-on" style="margin-left:6px; font-size:0.58rem;">● Always ON</span>
+              </div>
+              <div class="auto-reason" id="reason-pump">Continuous — always on</div>
+            </div>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="toggle-pump" checked disabled />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <!-- Light (auto by sunlight) -->
+        <div class="control-row" id="row-light" onclick="toggleControl('light')" style="margin-top:0.5rem;">
+          <div class="control-info">
+            <div class="control-icon">💡</div>
+            <div>
+              <div class="control-name">Grow Light
+                <span class="auto-badge" id="badge-light" style="margin-left:6px; font-size:0.58rem;">Auto</span>
+              </div>
+              <div class="auto-reason" id="reason-light">Awaiting sensor data…</div>
+            </div>
+          </div>
+          <label class="toggle" onclick="event.stopPropagation()">
+            <input type="checkbox" id="toggle-light" onchange="onToggleChange('light', this.checked)" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <!-- Mist Maker (auto by humidity) -->
+        <div class="control-row" id="row-mist" onclick="toggleControl('mist')" style="margin-top:0.5rem; margin-bottom:0.75rem;">
+          <div class="control-info">
+            <div class="control-icon">🌫️</div>
+            <div>
+              <div class="control-name">Mist Maker
+                <span class="auto-badge" id="badge-mist" style="margin-left:6px; font-size:0.58rem;">Auto</span>
+              </div>
+              <div class="auto-reason" id="reason-mist">Awaiting sensor data…</div>
+            </div>
+          </div>
+          <label class="toggle" onclick="event.stopPropagation()">
+            <input type="checkbox" id="toggle-mist" onchange="onToggleChange('mist', this.checked)" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Shed Status (auto by sunlight) -->
+      <div class="card shed-card">
+        <div>
+          <div class="panel-header" style="margin-bottom: 2px;">🏠 Shade System
+            <span class="auto-badge" id="badge-shed" style="margin-left:6px;">Auto</span>
+          </div>
+          <div style="font-size:0.72rem; color:var(--text-muted);">Servo-controlled · sunlight-triggered</div>
+          <div class="auto-reason" id="reason-shed" style="max-width:160px;">Awaiting…</div>
+        </div>
+        <div style="display:flex; flex-direction:column; align-items:flex-end; gap:8px;">
+          <div class="shed-badge closed" id="shed-badge">● CLOSED</div>
+          <label class="toggle" onclick="event.stopPropagation()">
+            <input type="checkbox" id="toggle-shed" onchange="onToggleChange('shed', this.checked)" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <!-- Live Camera Feed -->
+    <div class="card camera-card">
+      <div class="panel-header">📷 Live Plant Camera</div>
+
+      <div class="camera-feed-wrap">
+        <div class="camera-scanline"></div>
+        <img id="camera-image" src="" alt="Live plant feed" style="display:none;" />
+        <div class="camera-no-image" id="camera-placeholder">
+          <div class="icon">📷</div>
+          <div>Awaiting first image from ESP32-CAM…</div>
+          <div style="font-size:0.68rem; margin-top:4px;">Images captured every 12 seconds</div>
+        </div>
+        <div class="camera-overlay">
+          <div class="cam-badge"><div class="dot"></div>LIVE</div>
+        </div>
+      </div>
+
+      <div class="cam-info">
+        <span>ESP32-CAM · OV2640 · VGA</span>
+        <span class="cam-timestamp" id="cam-timestamp">—</span>
+      </div>
+    </div>
+
+    <!-- AI Disease Detection -->
+    <div class="card ai-card">
+      <div class="ai-status-row">
+        <div class="panel-header">🧬 AI Disease Detection</div>
+        <div class="ai-powered">Powered by <span>Gemini Vision</span> ✨</div>
+      </div>
+
+      <div class="ai-status-row" style="margin-top:-0.25rem;">
+        <div id="ai-disease-name" style="color:var(--text-secondary);"><span class="waiting-dots">Waiting for analysis</span></div>
+        <div class="ai-badge pending" id="ai-status-badge">PENDING</div>
+      </div>
+
+      <!-- Confidence Ring + Bar -->
+      <div class="confidence-wrap">
+        <div class="confidence-ring-container">
+          <svg viewBox="0 0 80 80">
+            <circle class="ring-bg" cx="40" cy="40" r="33" />
+            <circle class="ring-fill" cx="40" cy="40" r="33" id="confidence-ring" stroke="var(--accent-primary)" />
+          </svg>
+          <div class="confidence-label" id="confidence-label-ring" style="color:var(--accent-primary);">0%</div>
+        </div>
+        <div class="confidence-details">
+          <div class="confidence-title">Detection Confidence</div>
+          <div class="confidence-bar-wrap">
+            <div class="confidence-bar" id="confidence-bar" style="width:0%; background:var(--accent-primary)"></div>
+          </div>
+          <div class="confidence-pct" id="confidence-pct" style="color:var(--accent-primary);">0% confidence</div>
+        </div>
+      </div>
+
+      <!-- Recommendation -->
+      <div class="recommendation-wrap">
+        <div class="rec-icon">💊</div>
+        <div id="ai-recommendation">Awaiting first plant image from ESP32-CAM…</div>
+      </div>
+
+      <div id="ai-analysis-time">Last analysis: —</div>
+    </div>
+
+  </div><!-- /.bottom-grid -->
+
+  <!-- ════════════════════════════════════
+       ANALYTICS SECTION
+  ════════════════════════════════════ -->
+  <section class="analytics-section" aria-label="Sensor graphs and analytics">
+    <p class="section-title" style="margin-bottom:1rem;">&#x1F4CA; Plant Analytics &amp; Sensor Graphs</p>
+
+    <!-- Tab Bar -->
+    <div class="chart-tab-bar" role="tablist">
+      <button class="chart-tab active" id="tab-env"       onclick="switchTab('env')"       role="tab" aria-selected="true">&#x1F321;&#xFE0F; Environment</button>
+      <button class="chart-tab"        id="tab-water"     onclick="switchTab('water')"     role="tab">&#x1F9EA; Water Quality</button>
+      <button class="chart-tab"        id="tab-light"     onclick="switchTab('light')"     role="tab">&#x2600;&#xFE0F; Light &amp; Growth</button>
+      <button class="chart-tab"        id="tab-actuators" onclick="switchTab('actuators')" role="tab">&#x26A1; Actuators</button>
+      <button class="chart-tab"        id="tab-patterns"  onclick="switchTab('patterns')"  role="tab">&#x1F324;&#xFE0F; Patterns &amp; Correlations</button>
+    </div>
+
+    <!-- ──────────────────── TAB: Environment ──────────────────── -->
+    <div class="chart-panel visible" id="panel-env">
+      <!-- Stat cards -->
+      <div class="stats-row">
+        <div class="stat-card">
+          <div class="stat-label">🌡️ Air Temp Now</div>
+          <div class="stat-val" id="sg-air-temp" style="color:var(--accent-primary)">&#x2014;</div>
+          <div class="stat-delta flat" id="sg-air-temp-d">—</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">💧 Humidity Now</div>
+          <div class="stat-val" id="sg-humidity" style="color:var(--accent-cyan)">&#x2014;</div>
+          <div class="stat-delta flat" id="sg-humidity-d">—</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">🌊 Water Temp Now</div>
+          <div class="stat-val" id="sg-water-temp" style="color:var(--accent-green)">&#x2014;</div>
+          <div class="stat-delta flat" id="sg-water-temp-d">—</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Optimal Range</div>
+          <div class="stat-val" style="font-size:0.85rem; color:var(--text-secondary); font-family:'Inter',sans-serif; margin-top:4px;">18–21°C / 50–70% RH</div>
+          <div class="stat-delta flat">Lettuce (Lactuca sativa)</div>
+        </div>
+      </div>
+      <!-- Charts -->
+      <div class="charts-3col">
+        <div class="chart-card">
+          <div class="chart-card-header">
+            <div class="chart-title">🌡️ Air Temperature</div>
+            <span class="chart-cur" id="cur-air-temp">&#x2014;</span>
+          </div>
+          <div class="chart-range">Optimal: 18–21°C (day)</div>
+          <div class="chart-canvas-wrap"><canvas id="chart-air-temp"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card-header">
+            <div class="chart-title">💧 Humidity</div>
+            <span class="chart-cur" id="cur-humidity">&#x2014;</span>
+          </div>
+          <div class="chart-range">Optimal: 50–70% RH</div>
+          <div class="chart-canvas-wrap"><canvas id="chart-humidity"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card-header">
+            <div class="chart-title">🌊 Water Temp</div>
+            <span class="chart-cur" id="cur-water-temp">&#x2014;</span>
+          </div>
+          <div class="chart-range">Optimal: 18–22°C</div>
+          <div class="chart-canvas-wrap"><canvas id="chart-water-temp"></canvas></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ──────────────────── TAB: Water Quality ──────────────────── -->
+    <div class="chart-panel" id="panel-water">
+      <div class="stats-row">
+        <div class="stat-card">
+          <div class="stat-label">⚗️ pH Now</div>
+          <div class="stat-val" id="sg-ph" style="color:var(--accent-purple)">&#x2014;</div>
+          <div class="stat-delta flat" id="sg-ph-d">—</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">🧪 TDS Now</div>
+          <div class="stat-val" id="sg-tds" style="color:var(--accent-blue, var(--accent-primary))">&#x2014;</div>
+          <div class="stat-delta flat" id="sg-tds-d">—</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">🪣 Water Level</div>
+          <div class="stat-val" id="sg-wlevel" style="color:var(--accent-cyan)">&#x2014;</div>
+          <div class="stat-delta flat" id="sg-wlevel-d">—</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Optimal Range</div>
+          <div class="stat-val" style="font-size:0.85rem; color:var(--text-secondary); font-family:'Inter',sans-serif; margin-top:4px;">pH 5.5–6.0</div>
+          <div class="stat-delta flat">TDS 560–840 ppm</div>
+        </div>
+      </div>
+      <div class="charts-3col">
+        <div class="chart-card">
+          <div class="chart-card-header">
+            <div class="chart-title">⚗️ pH Level</div>
+            <span class="chart-cur" id="cur-ph">&#x2014;</span>
+          </div>
+          <div class="chart-range">Optimal: 5.5–6.0</div>
+          <div class="chart-canvas-wrap"><canvas id="chart-ph"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card-header">
+            <div class="chart-title">🧪 TDS / Nutrients</div>
+            <span class="chart-cur" id="cur-tds">&#x2014;</span>
+          </div>
+          <div class="chart-range">Optimal: 560–840 ppm</div>
+          <div class="chart-canvas-wrap"><canvas id="chart-tds"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card-header">
+            <div class="chart-title">🪣 Water Level</div>
+            <span class="chart-cur" id="cur-water-level">&#x2014;</span>
+          </div>
+          <div class="chart-range">Keep above 60%</div>
+          <div class="chart-canvas-wrap"><canvas id="chart-water-level"></canvas></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ──────────────────── TAB: Light & Growth ──────────────────── -->
+    <div class="chart-panel" id="panel-light">
+      <div class="stats-row">
+        <div class="stat-card">
+          <div class="stat-label">☀️ Sunlight Now</div>
+          <div class="stat-val" id="sg-sunlight" style="color:var(--accent-yellow)">&#x2014;</div>
+          <div class="stat-delta flat" id="sg-sunlight-d">—</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">💡 Grow Light</div>
+          <div class="stat-val" id="sg-light-state" style="color:var(--accent-green); font-family:'Inter',sans-serif; font-size:1rem;">&#x2014;</div>
+          <div class="stat-delta flat">Auto-controlled</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">🏠 Shed State</div>
+          <div class="stat-val" id="sg-shed-state" style="color:var(--accent-orange); font-family:'Inter',sans-serif; font-size:1rem;">&#x2014;</div>
+          <div class="stat-delta flat">Sunlight-triggered</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Photoperiod</div>
+          <div class="stat-val" style="font-size:0.85rem; color:var(--text-secondary); font-family:'Inter',sans-serif; margin-top:4px;">14–16 h/day</div>
+          <div class="stat-delta flat">Lettuce requirement</div>
+        </div>
+      </div>
+      <div class="chart-full">
+        <div class="chart-card">
+          <div class="chart-card-header">
+            <div class="chart-title">☀️ Sunlight Intensity Over Time</div>
+            <span class="chart-cur" id="cur-sunlight">&#x2014;</span>
+          </div>
+          <div class="chart-range">Shed auto-closes at 70% · Grow light auto-on below 40%</div>
+          <div class="chart-canvas-wrap tall"><canvas id="chart-sunlight"></canvas></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ──────────────────── TAB: Actuators ────────────────────── -->
+    <div class="chart-panel" id="panel-actuators">
+      <div class="stats-row">
+        <div class="stat-card">
+          <div class="stat-label">💧 Pump</div>
+          <div class="stat-val" style="color:var(--accent-green); font-family:'Inter',sans-serif; font-size:1rem;">Always ON</div>
+          <div class="stat-delta flat">Continuous circulation</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">💡 Grow Light</div>
+          <div class="stat-val" id="sg-la-light" style="font-family:'Inter',sans-serif; font-size:1rem;">&#x2014;</div>
+          <div class="stat-delta flat">Sun &lt; 40% → ON</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">🌫️ Mist Maker</div>
+          <div class="stat-val" id="sg-la-mist" style="font-family:'Inter',sans-serif; font-size:1rem;">&#x2014;</div>
+          <div class="stat-delta flat">Humidity &lt; 45% → ON</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">🏠 Shade</div>
+          <div class="stat-val" id="sg-la-shed" style="font-family:'Inter',sans-serif; font-size:1rem;">&#x2014;</div>
+          <div class="stat-delta flat">Sun &gt; 70% → CLOSE</div>
+        </div>
+      </div>
+      <div class="chart-full">
+        <div class="chart-card">
+          <div class="chart-card-header">
+            <div class="chart-title">⚡ Actuator Activity Timeline</div>
+            <span class="range-pill">• 1 = ON / OPEN</span>
+          </div>
+          <div class="chart-range">Shows when each actuator was active (1) vs inactive (0)</div>
+          <div class="chart-canvas-wrap tall"><canvas id="chart-actuators"></canvas></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ──────────────── TAB: Patterns & Correlations ──────────────── -->
+    <div class="chart-panel" id="panel-patterns">
+
+      <!-- Condition comparison cards -->
+      <div class="stats-row" style="grid-template-columns:repeat(3,1fr);">
+        <!-- Sunny -->
+        <div class="stat-card" style="border-color:rgba(245,200,66,0.3);">
+          <div class="stat-label" style="color:var(--accent-yellow);">&#x2600;&#xFE0F; Sunny Periods (&ge;60%)</div>
+          <div class="stat-val" id="cond-sunny-pct" style="color:var(--accent-yellow);">—</div>
+          <div style="margin-top:8px; font-size:0.72rem; color:var(--text-muted); line-height:1.8;">
+            Avg Temp: <strong id="cond-sunny-temp" style="color:var(--text-primary);">—</strong><br>
+            Avg Humidity: <strong id="cond-sunny-hum" style="color:var(--text-primary);">—</strong><br>
+            Avg Water Temp: <strong id="cond-sunny-wt" style="color:var(--text-primary);">—</strong>
+          </div>
+        </div>
+        <!-- Moderate -->
+        <div class="stat-card" style="border-color:rgba(59,157,255,0.3);">
+          <div class="stat-label" style="color:var(--accent-primary);">&#x26C5; Moderate (30–60%)</div>
+          <div class="stat-val" id="cond-mod-pct" style="color:var(--accent-primary);">—</div>
+          <div style="margin-top:8px; font-size:0.72rem; color:var(--text-muted); line-height:1.8;">
+            Avg Temp: <strong id="cond-mod-temp" style="color:var(--text-primary);">—</strong><br>
+            Avg Humidity: <strong id="cond-mod-hum" style="color:var(--text-primary);">—</strong><br>
+            Avg Water Temp: <strong id="cond-mod-wt" style="color:var(--text-primary);">—</strong>
+          </div>
+        </div>
+        <!-- Cloudy -->
+        <div class="stat-card" style="border-color:rgba(122,155,196,0.3);">
+          <div class="stat-label" style="color:var(--text-secondary);">&#x2601;&#xFE0F; Cloudy (&lt;30%)</div>
+          <div class="stat-val" id="cond-cloudy-pct" style="color:var(--text-secondary);">—</div>
+          <div style="margin-top:8px; font-size:0.72rem; color:var(--text-muted); line-height:1.8;">
+            Avg Temp: <strong id="cond-cloudy-temp" style="color:var(--text-primary);">—</strong><br>
+            Avg Humidity: <strong id="cond-cloudy-hum" style="color:var(--text-primary);">—</strong><br>
+            Avg Water Temp: <strong id="cond-cloudy-wt" style="color:var(--text-primary);">—</strong>
+          </div>
+        </div>
+      </div>
+
+      <!-- Dual-axis overlay: Sunlight + Temp + Humidity over time -->
+      <div class="chart-full">
+        <div class="chart-card">
+          <div class="chart-card-header">
+            <div class="chart-title">&#x1F4C8; Sunlight · Temp · Humidity Overlay
+              <span class="range-pill" style="background:rgba(245,200,66,0.1); color:var(--accent-yellow); border-color:rgba(245,200,66,0.25);">Multi-axis timeline</span>
+            </div>
+          </div>
+          <div class="chart-range">Yellow = Sunlight %, Blue = Air Temp °C, Cyan = Humidity %</div>
+          <div class="chart-canvas-wrap tall"><canvas id="chart-overlay"></canvas></div>
+        </div>
+      </div>
+
+      <!-- Scatter plot + Correlations -->
+      <div class="charts-2col">
+        <!-- Scatter: Sunlight vs Temp -->
+        <div class="chart-card">
+          <div class="chart-card-header">
+            <div class="chart-title">&#x1F9EE; Sunlight vs Air Temp (Scatter)</div>
+            <span class="chart-cur" id="cur-corr-temp">r = —</span>
+          </div>
+          <div class="chart-range">Each dot = one reading. Tighter cluster = stronger correlation.</div>
+          <div class="chart-canvas-wrap tall"><canvas id="chart-scatter-temp"></canvas></div>
+        </div>
+        <!-- Scatter: Sunlight vs Humidity -->
+        <div class="chart-card">
+          <div class="chart-card-header">
+            <div class="chart-title">&#x1F4A7; Sunlight vs Humidity (Scatter)</div>
+            <span class="chart-cur" id="cur-corr-hum">r = —</span>
+          </div>
+          <div class="chart-range">Negative r = humidity drops as sunlight rises.</div>
+          <div class="chart-canvas-wrap tall"><canvas id="chart-scatter-hum"></canvas></div>
+        </div>
+      </div>
+
+      <!-- Auto-generated insights feed -->
+      <div class="chart-card" style="margin-bottom:1rem;">
+        <div class="chart-card-header">
+          <div class="chart-title">&#x1F9E0; Smart Insights
+            <span style="font-size:0.65rem; color:var(--text-muted); font-weight:400;">Auto-generated from sensor patterns</span>
+          </div>
+          <span class="chart-cur" id="insight-datapts" style="font-size:0.68rem;">— readings</span>
+        </div>
+        <div id="insights-feed" style="display:flex; flex-direction:column; gap:0.5rem; margin-top:0.5rem;">
+          <div style="color:var(--text-muted); font-size:0.8rem; padding:0.5rem;">Waiting for sensor data…</div>
+        </div>
+      </div>
+
+    </div><!-- /panel-patterns -->
+
+  </section>
+
+
+  <!-- ════════════════════════════════════
+       MONTHLY ANALYSIS – Sensor Trends
+  ════════════════════════════════════ -->
+  <section class="panel" id="monthly-analysis-section" style="display:none;">
+    <div class="panel-header">
+      <h2>📊 Monthly Sensor Analysis</h2>
+      <p>Daily average trends over the last 30 days</p>
+    </div>
+
+    <div class="panel-body">
+      <!-- Controls -->
+      <div style="display:flex; gap:1rem; margin-bottom:1rem; flex-wrap:wrap; align-items:center;">
+        <label style="display:flex; align-items:center; gap:0.5rem; font-size:0.9rem; color:var(--text-secondary);">
+          <span>Days to analyze:</span>
+          <input type="number" id="monthly-days-input" value="30" min="7" max="90" style="width:70px; padding:4px 8px; border-radius:6px; border:1px solid rgba(56,148,255,0.2); background:rgba(56,148,255,0.05); color:#e8f0fe;" />
+        </label>
+        <button style="padding:8px 16px; border-radius:8px; border:1px solid rgba(56,148,255,0.3); background:rgba(56,148,255,0.1); color:#e8f0fe; cursor:pointer; font-weight:600;" onclick="loadMonthlyData()">↻ Refresh</button>
+      </div>
+
+      <!-- Summary Stats -->
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:1rem; margin-bottom:2rem;">
+        <div style="background:rgba(255,140,66,0.08); border:1px solid rgba(255,140,66,0.2); border-radius:8px; padding:1rem;">
+          <div style="font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.5rem;">Avg Temperature (°C)</div>
+          <div style="font-size:1.5rem; font-weight:700; color:#ff8c42;" id="monthly-avg-temp">—</div>
+        </div>
+        <div style="background:rgba(34,229,229,0.08); border:1px solid rgba(34,229,229,0.2); border-radius:8px; padding:1rem;">
+          <div style="font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.5rem;">Avg Humidity (%)</div>
+          <div style="font-size:1.5rem; font-weight:700; color:#22e5e5;" id="monthly-avg-humidity">—</div>
+        </div>
+        <div style="background:rgba(168,85,247,0.08); border:1px solid rgba(168,85,247,0.2); border-radius:8px; padding:1rem;">
+          <div style="font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.5rem;">Avg pH</div>
+          <div style="font-size:1.5rem; font-weight:700; color:#a855f7;" id="monthly-avg-ph">—</div>
+        </div>
+        <div style="background:rgba(59,157,255,0.08); border:1px solid rgba(59,157,255,0.2); border-radius:8px; padding:1rem;">
+          <div style="font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.5rem;">Avg TDS (ppm)</div>
+          <div style="font-size:1.5rem; font-weight:700; color:#3b9dff;" id="monthly-avg-tds">—</div>
+        </div>
+        <div style="background:rgba(34,215,122,0.08); border:1px solid rgba(34,215,122,0.2); border-radius:8px; padding:1rem;">
+          <div style="font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.5rem;">Avg Water Level (%)</div>
+          <div style="font-size:1.5rem; font-weight:700; color:#22d77a;" id="monthly-avg-wl">—</div>
+        </div>
+        <div style="background:rgba(245,200,66,0.08); border:1px solid rgba(245,200,66,0.2); border-radius:8px; padding:1rem;">
+          <div style="font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.5rem;">Avg Sunlight (%)</div>
+          <div style="font-size:1.5rem; font-weight:700; color:#f5c842;" id="monthly-avg-sun">—</div>
+        </div>
+      </div>
+
+      <!-- Monthly Charts -->
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(300px, 1fr)); gap:2rem; margin-bottom:2rem;">
+        <!-- Temperature -->
+        <div style="background:rgba(255,140,66,0.05); border:1px solid rgba(255,140,66,0.15); border-radius:12px; padding:1rem;">
+          <h4 style="margin:0 0 1rem; font-size:0.95rem; color:#ff8c42; font-weight:600;">🌡️ Temperature Trend</h4>
+          <div style="height:200px;"><canvas id="monthly-chart-temp"></canvas></div>
+        </div>
+        <!-- Humidity -->
+        <div style="background:rgba(34,229,229,0.05); border:1px solid rgba(34,229,229,0.15); border-radius:12px; padding:1rem;">
+          <h4 style="margin:0 0 1rem; font-size:0.95rem; color:#22e5e5; font-weight:600;">💧 Humidity Trend</h4>
+          <div style="height:200px;"><canvas id="monthly-chart-humidity"></canvas></div>
+        </div>
+        <!-- Water Level -->
+        <div style="background:rgba(34,215,122,0.05); border:1px solid rgba(34,215,122,0.15); border-radius:12px; padding:1rem;">
+          <h4 style="margin:0 0 1rem; font-size:0.95rem; color:#22d77a; font-weight:600;">🪣 Water Level Trend</h4>
+          <div style="height:200px;"><canvas id="monthly-chart-wl"></canvas></div>
+        </div>
+      </div>
+
+      <!-- Detailed Daily Data Table -->
+      <div style="background:rgba(56,148,255,0.03); border:1px solid rgba(56,148,255,0.1); border-radius:12px; padding:1rem; overflow-x:auto;">
+        <h4 style="margin:0 0 1rem; font-size:0.95rem; color:#e8f0fe; font-weight:600;">📋 Daily Summary Data</h4>
+        <table id="monthly-data-table" style="width:100%; font-size:0.8rem; border-collapse:collapse;">
+          <thead style="border-bottom:1px solid rgba(56,148,255,0.2);">
+            <tr style="color:var(--text-secondary);">
+              <th style="text-align:left; padding:0.75rem;">Date</th>
+              <th style="text-align:center; padding:0.75rem; color:#ff8c42;">Temp °C</th>
+              <th style="text-align:center; padding:0.75rem; color:#22e5e5;">Humidity %</th>
+              <th style="text-align:center; padding:0.75rem; color:#a855f7;">pH</th>
+              <th style="text-align:center; padding:0.75rem; color:#3b9dff;">TDS ppm</th>
+              <th style="text-align:center; padding:0.75rem; color:#22d77a;">Water Lvl %</th>
+              <th style="text-align:center; padding:0.75rem; color:#f5c842;">Sunlight %</th>
+            </tr>
+          </thead>
+          <tbody id="monthly-table-body">
+            <tr><td colspan="7" style="text-align:center; padding:1rem; color:var(--text-muted);">Loading data…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- Toast -->
+<div id="toast" role="alert" aria-live="polite"></div>
+
+<!-- ════════════════════════════════════
+     SETTINGS MODAL – All Sensors
+════════════════════════════════════ -->
+<div class="settings-overlay" id="settings-overlay" onclick="closeSettings()" aria-hidden="true"></div>
+<div class="settings-modal" id="settings-modal" role="dialog" aria-modal="true" aria-label="Plant condition settings">
+
+  <!-- Sticky header -->
+  <div class="settings-header">
+    <div>
+      <div class="settings-title">⚙️ Plant Settings</div>
+      <div class="settings-sub">Edit all sensor thresholds for the selected plant</div>
+    </div>
+    <button class="settings-close" onclick="closeSettings()" aria-label="Close">×</button>
+  </div>
+
+  <!-- Quick-nav pills -->
+  <div class="settings-nav" id="settings-nav">
+    <button class="snav-btn" onclick="scrollToSec('sec-plant')">🌱 Plant</button>
+    <button class="snav-btn" onclick="scrollToSec('sec-temp')">🌡️ Temp</button>
+    <button class="snav-btn" onclick="scrollToSec('sec-hum')">💧 Humidity</button>
+    <button class="snav-btn" onclick="scrollToSec('sec-wt')">🌊 Water T</button>
+    <button class="snav-btn" onclick="scrollToSec('sec-ph')">⚗️ pH</button>
+    <button class="snav-btn" onclick="scrollToSec('sec-tds')">🧪 TDS</button>
+    <button class="snav-btn" onclick="scrollToSec('sec-tank-config')">🪣 Tank</button>
+    <button class="snav-btn" onclick="scrollToSec('sec-wl')">🪣 Level</button>
+    <button class="snav-btn" onclick="scrollToSec('sec-sun')">☀️ Light</button>
+  </div>
+
+  <div class="settings-section">
+
+    <!-- ── Plant selector ─────────────────────────────────── -->
+    <div class="settings-group" id="sec-plant">
+      <div class="settings-group-title">🌱 Active Plant Profile</div>
+      <select id="settings-plant-selector" onchange="loadPlantEditor(this.value)" style="width:100%; margin-bottom:0;"></select>
+    </div>
+
+    <!-- ── Air Temperature ───────────────────────────────── -->
+    <div class="settings-group" id="sec-temp">
+      <div class="settings-group-title">🌡️ Air Temperature <span style="font-weight:400; color:var(--text-muted);">(°C)</span></div>
+      <div class="settings-label">Ideal Range</div>
+      <div class="settings-row">
+        <div class="settings-field"><label>Min °C</label><input type="number" id="s-temp-min" step="0.5" min="0" max="50" /></div>
+        <div class="settings-field"><label>Max °C</label><input type="number" id="s-temp-max" step="0.5" min="0" max="50" /></div>
+      </div>
+    </div>
+
+    <!-- ── Humidity ──────────────────────────────────────── -->
+    <div class="settings-group" id="sec-hum">
+      <div class="settings-group-title">💧 Humidity <span style="font-weight:400; color:var(--text-muted);">(%)</span></div>
+      <div class="settings-label">Ideal Range — Mist turns ON below min</div>
+      <div class="settings-row">
+        <div class="settings-field"><label>Min %</label><input type="number" id="s-hum-min" step="1" min="0" max="100" /></div>
+        <div class="settings-field"><label>Max %</label><input type="number" id="s-hum-max" step="1" min="0" max="100" /></div>
+      </div>
+    </div>
+
+    <!-- ── Water Temperature ─────────────────────────────── -->
+    <div class="settings-group" id="sec-wt">
+      <div class="settings-group-title">🌊 Water Temperature <span style="font-weight:400; color:var(--text-muted);">(°C)</span></div>
+      <div class="settings-label">Ideal root-zone range</div>
+      <div class="settings-row">
+        <div class="settings-field"><label>Min °C</label><input type="number" id="s-wt-min" step="0.5" min="0" max="40" /></div>
+        <div class="settings-field"><label>Max °C</label><input type="number" id="s-wt-max" step="0.5" min="0" max="40" /></div>
+      </div>
+    </div>
+
+    <!-- ── pH ────────────────────────────────────────────── -->
+    <div class="settings-group" id="sec-ph">
+      <div class="settings-group-title">⚗️ pH Level</div>
+      <div class="settings-label">Ideal pH range for nutrient uptake</div>
+      <div class="settings-row">
+        <div class="settings-field"><label>Min pH</label><input type="number" id="s-ph-min" step="0.1" min="0" max="14" /></div>
+        <div class="settings-field"><label>Max pH</label><input type="number" id="s-ph-max" step="0.1" min="0" max="14" /></div>
+      </div>
+    </div>
+
+    <!-- ── TDS ───────────────────────────────────────────── -->
+    <div class="settings-group" id="sec-tds">
+      <div class="settings-group-title">🧪 TDS / Nutrients <span style="font-weight:400; color:var(--text-muted);">(ppm)</span></div>
+      <div class="settings-label">Ideal nutrient concentration</div>
+      <div class="settings-row">
+        <div class="settings-field"><label>Min ppm</label><input type="number" id="s-tds-min" step="10" min="0" max="5000" /></div>
+        <div class="settings-field"><label>Max ppm</label><input type="number" id="s-tds-max" step="10" min="0" max="5000" /></div>
+      </div>
+    </div>
+
+    <!-- ── Tank Configuration ───────────────────────────────── -->
+    <div class="settings-group" id="sec-tank-config">
+      <div class="settings-group-title">🪣 Tank Configuration</div>
+      <div class="settings-label">Tank Dimensions (for water volume calculation)</div>
+      <div class="settings-row">
+        <div class="settings-field"><label>Height (cm)</label><input type="number" id="s-tank-height" step="1" min="1" max="500" placeholder="30" /></div>
+        <div class="settings-field"><label>Width (cm)</label><input type="number" id="s-tank-width" step="1" min="1" max="500" placeholder="30" /></div>
+        <div class="settings-field"><label>Length (cm)</label><input type="number" id="s-tank-length" step="1" min="1" max="500" placeholder="30" /></div>
+      </div>
+      <div class="settings-label">Sensor Offset (cm)</div>
+      <div class="settings-row">
+        <div class="settings-field" style="flex:1; min-width:150px;"><label>Offset from bottom (cm)</label><input type="number" id="s-sensor-offset" step="0.1" min="0" max="100" placeholder="0" /></div>
+      </div>
+      <button class="btn-save" style="margin:0.5rem 0 0;" onclick="saveTankConfig()">✓ Save Tank Config</button>
+    </div>
+
+        <!-- ── Water Level ───────────────────────────────────── -->
+    <div class="settings-group" id="sec-wl">
+      <div class="settings-group-title">🪣 Water Level <span style="font-weight:400; color:var(--text-muted);">(%)</span></div>
+      <div class="settings-label">Alert thresholds</div>
+      <div class="settings-row">
+        <div class="settings-field"><label>Warning below %</label><input type="number" id="s-wl-warn" step="1" min="0" max="100" placeholder="50" /></div>
+        <div class="settings-field"><label>Critical below %</label><input type="number" id="s-wl-crit" step="1" min="0" max="100" placeholder="25" /></div>
+      </div>
+    </div>
+
+    <!-- ── Sunlight / Shade ──────────────────────────────── -->
+    <div class="settings-group" id="sec-sun">
+      <div class="settings-group-title">☀️ Sunlight &amp; Shade Control <span style="font-weight:400; color:var(--text-muted);">(%)</span></div>
+      <div class="settings-label">💡 Grow Light thresholds (auto)</div>
+      <div class="settings-row">
+        <div class="settings-field"><label>Light ON below %</label><input type="number" id="s-light-on" step="1" min="0" max="100" /></div>
+        <div class="settings-field"><label>Light OFF above %</label><input type="number" id="s-light-off" step="1" min="0" max="100" /></div>
+      </div>
+      <div class="settings-label">🏠 Shade thresholds (auto)</div>
+      <div class="settings-row">
+        <div class="settings-field"><label>Shade CLOSE above %</label><input type="number" id="s-shed-close" step="1" min="0" max="100" /></div>
+        <div class="settings-field"><label>Shade OPEN below %</label><input type="number" id="s-shed-open" step="1" min="0" max="100" /></div>
+      </div>
+    </div>
+
+    <button class="btn-save" id="save-conditions-btn" onclick="saveConditions()">✓ Save All Conditions</button>
+
+    <hr style="border:none; border-top:1px solid rgba(56,148,255,0.08); margin:1.5rem 0 1rem;"/>
+
+    <!-- ── Create new plant ───────────────────────────────── -->
+    <div class="settings-group">
+      <div class="settings-group-title">➕ Create Custom Plant Profile</div>
+      <div class="settings-row">
+        <div class="settings-field"><label>Name</label><input type="text" id="new-plant-name" placeholder="Cucumber" /></div>
+        <div class="settings-field"><label>Key ID (lowercase)</label><input type="text" id="new-plant-key" placeholder="cucumber" /></div>
+        <div class="settings-field" style="max-width:72px;"><label>Emoji</label><input type="text" id="new-plant-emoji" placeholder="🥒" maxlength="4" /></div>
+      </div>
+      <div class="settings-row">
+        <div class="settings-field"><label>Temp Min</label><input type="number" id="np-temp-min" placeholder="18" /></div>
+        <div class="settings-field"><label>Temp Max</label><input type="number" id="np-temp-max" placeholder="26" /></div>
+        <div class="settings-field"><label>Hum Min</label><input type="number" id="np-hum-min" placeholder="55" /></div>
+        <div class="settings-field"><label>Hum Max</label><input type="number" id="np-hum-max" placeholder="80" /></div>
+      </div>
+      <div class="settings-row">
+        <div class="settings-field"><label>pH Min</label><input type="number" id="np-ph-min" step="0.1" placeholder="5.5" /></div>
+        <div class="settings-field"><label>pH Max</label><input type="number" id="np-ph-max" step="0.1" placeholder="6.5" /></div>
+        <div class="settings-field"><label>TDS Min</label><input type="number" id="np-tds-min" placeholder="500" /></div>
+        <div class="settings-field"><label>TDS Max</label><input type="number" id="np-tds-max" placeholder="1000" /></div>
+      </div>
+      <button class="btn-save btn-create" onclick="createNewPlant()">➕ Create Plant</button>
+    </div>
+
+  </div><!-- /settings-section -->
+
+</div><!-- /settings-modal -->
+
+
+<!-- ════════════════════════════════════════════════════════════
+     JAVASCRIPT
+════════════════════════════════════════════════════════════ -->
+<script>
+  // ─── Configuration ─────────────────────────────────────────────
+  const API_BASE            = "https://hydrophonics-server-1.onrender.com";       // Empty = same origin; set to "http://192.168.1.100:5000" if separate
+  const SENSOR_INTERVAL_MS  = 3000;     // Fetch sensor data every 3 s (was 2s — eases server load)
+  const AUTO_INTERVAL_MS    = 4000;     // Fetch autonomous status every 4 s
+  const AI_INTERVAL_MS      = 15000;    // Fetch AI result every 15 s
+  const IMAGE_INTERVAL_MS   = 15000;    // Refresh camera image every 15 s
+
+  // ─── State ─────────────────────────────────────────────────────
+  const controls = { pump: true, light: false, mist: false, shed: false };
+  let lastImageTs  = null;
+  let connectionOk = true;
+  let socket = null;
+
+  // Track manual actions to prevent UI flicker (fighting with background fetch)
+  const locks = {
+    pump: 0, light: 0, mist: 0, shed: 0, auto: 0
+  };
+  // Increased from 10s to account for: 3 retries × 10-30s timeout + 3s total retry delays
+  // Worst case: first attempt (30s) + 2nd attempt (10s) + 3rd attempt (10s) = 50s, plus delays
+  const LOCK_DURATION = 60000; // 60 seconds lockout after manual action (covers worst-case retries)
+
+  // WebSocket Integration (enhancement only — HTTP polling is the fallback)
+  function initWebSocket() {
+    // Guard: if socket.io client didn't load (CDN failure), skip silently
+    if (typeof io === 'undefined') {
+      console.warn('[WS] Socket.io not available, using HTTP polling only');
+      return;
+    }
+
+    console.log('[WS] Connecting to:', API_BASE);
+    try {
+      socket = io(API_BASE, {
+        transports: ['websocket', 'polling'],
+        timeout: 5000,
+        reconnectionAttempts: 5,
+        reconnectionDelay: 3000,
+      });
+
+      socket.on('connect', () => {
+        console.log('[WS] Real-time connected ✓');
+        showToast('🔌', 'Real-time connection active');
+        // Don't call setConnectionStatus here — HTTP polling owns that
+      });
+
+      socket.on('disconnect', (reason) => {
+        console.warn('[WS] Disconnected:', reason);
+        // Do NOT set offline here — HTTP polling will handle the connection indicator
+      });
+
+      socket.on('status_update', (data) => {
+        console.log('[WS] Push update received');
+        updateDashboardWithData(data);
+        // WS update arrived — mark live since we have fresh data
+        setConnectionStatus(true);
+      });
+
+      socket.on('connect_error', (err) => {
+        // Silently log — backend may not support Socket.io yet
+        console.warn('[WS] Socket.io not available on server, using HTTP polling');
+        socket.disconnect();
+        socket = null;
+      });
+
+    } catch (e) {
+      console.warn('[WS] Failed to init socket:', e);
+      socket = null;
+    }
+  }
+
+  function updateDashboardWithData(data) {
+    if (!data) return;
+
+    // Air Temp
+    if (data.air_temperature !== undefined) {
+      setVal("air-temp", fmt(data.air_temperature, 1), "°C");
+      setBar("bar-air-temp", ((data.air_temperature - 0) / 50) * 100);
+    }
+    // Humidity
+    if (data.humidity !== undefined) {
+      setVal("humidity", fmt(data.humidity, 1), "%");
+      setBar("bar-humidity", data.humidity);
+    }
+    // Water Temp
+    if (data.water_temperature !== undefined) {
+      setVal("water-temp", fmt(data.water_temperature, 1), "°C");
+      setBar("bar-water-temp", ((data.water_temperature - 10) / 30) * 100);
+    }
+    // pH
+    if (data.ph !== undefined) {
+      const pH = Number(data.ph);
+      if (!isNaN(pH)) {
+        setVal("ph-value", fmt(pH, 2));
+        setBar("bar-ph", (pH / 14) * 100);
+        const phEl = document.getElementById("ph-value");
+        if (phEl) {
+          if (pH < 5.0 || pH > 7.5) phEl.style.color = "var(--accent-red)";
+          else if (pH >= 5.5 && pH <= 7.0) phEl.style.color = "var(--accent-green)";
+          else phEl.style.color = "var(--accent-yellow)";
+        }
+      }
+    }
+    // TDS
+    if (data.tds !== undefined) {
+      setVal("tds-value", fmt(data.tds, 0), "ppm");
+      setBar("bar-tds", clamp((data.tds / 2000) * 100, 0, 100));
+    }
+    // Water Level
+    if (data.water_level !== undefined) {
+      const wlPct = Math.round(data.water_level);
+      const wlBar = document.getElementById("bar-water-level");
+      if (wlBar) {
+        wlBar.classList.add('tank-fill-animate');
+        wlBar.style.width = wlPct + "%";
+      }
+    }
+    // Sunlight
+    if (data.sunlight !== undefined) {
+      setVal("sunlight-value", Math.round(data.sunlight), "%");
+      setBar("bar-sunlight", data.sunlight);
+    }
+
+    // Actuators
+    ["pump", "light", "mist", "shed"].forEach(key => {
+      if (data[key] !== undefined && Date.now() > (locks[key] || 0)) {
+        updateControlUI(key, data[key]);
+        controls[key] = data[key];
+      }
+    });
+
+    updateSensorCardColors(data);
+    document.getElementById("last-update").textContent = "Updated " + new Date().toLocaleTimeString();
+  }
+
+  // ─── Helpers ───────────────────────────────────────────────────
+  function fmt(val, decimals=1) {
+    return (val === null || val === undefined || isNaN(val))
+      ? "—"
+      : Number(val).toFixed(decimals);
+  }
+
+  function clamp(v, min, max) { return Math.min(Math.max(v, min), max); }
+
+  function setVal(id, value, unit="") {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const newText = value + (unit ? `<span class="sensor-unit">${unit}</span>` : "");
+    if (el.innerHTML !== newText) {
+      el.classList.remove("value-updated");
+      void el.offsetWidth; // reflow
+      el.classList.add("value-updated");
+      el.innerHTML = newText;
+    }
+  }
+
+  function setBar(id, pct) {
+    const el = document.getElementById(id);
+    if (el) el.style.width = clamp(pct, 0, 100) + "%";
+  }
+
+  // ─── Show Toast ────────────────────────────────────────────────
+  let toastTimer;
+  function showToast(icon, message, duration=3000) {
+    const t = document.getElementById("toast");
+    t.innerHTML = `${icon} ${message}`;
+    t.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove("show"), duration);
+  }
+
+  function setControlBadge(key, mode) {
+    const badge = document.getElementById(`badge-${key}`);
+    if (!badge) return;
+
+    if (key === 'pump') {
+      badge.className = 'auto-badge always-on';
+      badge.textContent = '● Always ON';
+      return;
+    }
+
+    const isOverride = mode === 'override';
+    badge.className = `auto-badge${isOverride ? ' override' : ''}`;
+    badge.textContent = isOverride ? '⚠ Override' : 'Auto';
+  }
+
+  // ─── Update Connection Status ──────────────────────────────────
+  function setConnectionStatus(ok) {
+    const dot = document.getElementById("connection-dot");
+    const label = document.getElementById("connection-status");
+    const badge = dot.closest('.status-badge');
+    if (ok) {
+      dot.style.background = "var(--accent-green)";
+      dot.style.boxShadow  = "0 0 15px var(--accent-green)";
+      label.textContent    = "Live";
+      if (badge) badge.classList.remove("status-offline");
+    } else {
+      dot.style.background = "var(--accent-red)";
+      dot.style.boxShadow  = "0 0 15px var(--accent-red)";
+      label.textContent    = "Offline";
+      if (badge) badge.classList.add("status-offline");
+    }
+    connectionOk = ok;
+  }
+
+  // ─── Fetch Sensor Data ─────────────────────────────────────────
+  async function fetchSensorData() {
+    try {
+      const res  = await fetch(`${API_BASE}/sensor-data`, { signal: AbortSignal.timeout(5000) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+
+      // Fetch tank liters separately for water level display
+      let wlLiters = '—', wlCapacity = '—';
+      try {
+        const wlRes = await fetch(`${API_BASE}/water-level-liters`, { signal: AbortSignal.timeout(3000) });
+        if (wlRes.ok) {
+          const wlData = await wlRes.json();
+          wlLiters = wlData.water_volume_liters ?? '—';
+          wlCapacity = wlData.tank_capacity_liters ?? '—';
+        }
+      } catch (e) {
+        console.warn('[TANK] Failed to fetch liters:', e);
+      }
+
+      // ── Air Temperature ──────────────────────────────────────
+      setVal("air-temp", fmt(data.air_temperature, 1), "°C");
+      setBar("bar-air-temp", ((data.air_temperature - 0) / 50) * 100);
+
+      // ── Humidity ─────────────────────────────────────────────
+      setVal("humidity", fmt(data.humidity, 1), "%");
+      setBar("bar-humidity", data.humidity);
+
+      // ── Water Temperature ────────────────────────────────────
+      setVal("water-temp", fmt(data.water_temperature, 1), "°C");
+      setBar("bar-water-temp", ((data.water_temperature - 10) / 30) * 100);
+
+      // ── pH ───────────────────────────────────────────────────
+      // Protect against missing or non-numeric pH values from the sensor
+      const pHraw = data.ph;
+      const pH = (pHraw === null || pHraw === undefined) ? NaN : Number(pHraw);
+      if (isFinite(pH)) {
+        setVal("ph-value", fmt(pH, 2));
+        setBar("bar-ph", (pH / 14) * 100);
+        // Color-code pH: 5.5–7.0 ideal, red if out of range
+        const phEl = document.getElementById("ph-value");
+        if (phEl) {
+          if (pH < 5.0 || pH > 7.5) {
+            phEl.style.color = "var(--accent-red)";
+          } else if (pH >= 5.5 && pH <= 7.0) {
+            phEl.style.color = "var(--accent-green)";
+          } else {
+            phEl.style.color = "var(--accent-yellow)";
+          }
+        }
+      } else {
+        // Fallback UI when pH is unavailable
+        setVal("ph-value", "—");
+        setBar("bar-ph", 0);
+        const phEl = document.getElementById("ph-value");
+        if (phEl) phEl.style.color = "";
+      }
+
+      // ── TDS ──────────────────────────────────────────────────
+      setVal("tds-value", fmt(data.tds, 0), "ppm");
+      setBar("bar-tds", clamp((data.tds / 2000) * 100, 0, 100));
+
+      // ── Water Level ──────────────────────────────────────────
+      const wlPct = Math.round(data.water_level || 0);
+      const wlEl = document.getElementById("water-level");
+      if (wlEl) {
+        wlEl.innerHTML = `${wlLiters}<span class="sensor-unit">L</span><div style="font-size:0.7rem; color:var(--text-muted); margin-top:2px;">of ${wlCapacity}L</div>`;
+        wlEl.style.color = wlPct < 20
+          ? "var(--accent-red)"
+          : (wlPct < 40 ? "var(--accent-yellow)" : "var(--accent-cyan)");
+      }
+      const wlBar = document.getElementById("bar-water-level");
+      if (wlBar) {
+        wlBar.classList.add('tank-fill-animate');
+        wlBar.style.width = wlPct + "%";
+      }
+
+      // ── Sunlight ─────────────────────────────────────────────
+      setVal("sunlight-value", Math.round(data.sunlight || 0), "%");
+      setBar("bar-sunlight", data.sunlight || 0);
+
+      // ── Actuator states (from ESP32 feedback) ────────────────
+      const actuators = ["pump", "light", "mist", "shed"];
+      actuators.forEach(key => {
+        if (data[key] !== undefined) {
+          // Only update if not recently toggled by user (prevent flicker)
+          if (Date.now() > (locks[key] || 0)) {
+            updateControlUI(key, data[key]);
+            controls[key] = data[key];
+          }
+        }
+      });
+
+      updateSensorCardColors(data);
+
+      // ── Timestamp ────────────────────────────────────────────
+      document.getElementById("last-update").textContent =
+        "Updated " + new Date().toLocaleTimeString();
+
+      setConnectionStatus(true);
+
+    } catch (err) {
+      console.warn("[SENSOR] Fetch failed:", err.message);
+      setConnectionStatus(false);
+    }
+  }
+
+  // ─── Fetch Autonomous Status ────────────────────────────────────
+  async function fetchAutoStatus() {
+    try {
+      const res  = await fetch(`${API_BASE}/autonomous-status`, { signal: AbortSignal.timeout(4000) });
+      if (!res.ok) return;
+      const data = await res.json();
+
+      // Update reason pills + badges
+      const actuators = ['pump', 'light', 'mist', 'shed'];
+      actuators.forEach(key => {
+        const info = data[key];
+        if (!info) return;
+
+        const reasonEl = document.getElementById(`reason-${key}`);
+        const badgeEl  = document.getElementById(`badge-${key}`);
+
+        if (reasonEl) reasonEl.textContent = info.reason || '—';
+
+        if (badgeEl) {
+          const isOverride = (info.reason || '').toLowerCase().includes('override');
+          badgeEl.className = 'auto-badge' + (isOverride ? ' override' : '') + (key === 'pump' ? ' always-on' : '');
+          badgeEl.textContent = isOverride ? '⚠ Override' : (key === 'pump' ? '● Always ON' : 'Auto');
+        }
+
+        // Only update if not recently toggled by user (prevent flicker)
+        if (Date.now() > (locks[key] || 0)) {
+          updateControlUI(key, info.state);
+          controls[key] = info.state;
+        }
+      });
+
+      // ── Auto/Manual Mode Sync ─────────────────────────────────
+      if (data.auto_mode !== undefined && Date.now() > (locks.auto || 0)) {
+        const amToggle = document.getElementById('toggle-auto-mode');
+        const amLabel  = document.getElementById('auto-mode-label');
+        if (amToggle && amToggle.checked !== data.auto_mode) {
+          amToggle.checked = data.auto_mode;
+          // Update pump interactiveness based on auto_mode
+          updatePumpLockState(data.auto_mode);
+        }
+        if (amLabel) {
+          amLabel.textContent = data.auto_mode ? 'Auto' : 'Manual';
+          amLabel.style.color = data.auto_mode ? 'var(--accent-green)' : 'var(--accent-yellow)';
+        }
+      }
+
+      // ── Shed alert banner ─────────────────────────────────────
+      const shedInfo   = data.shed;
+      const alertEl    = document.getElementById('shed-alert');
+      const alertMsgEl = document.getElementById('shed-alert-msg');
+      if (alertEl && shedInfo) {
+        const shedClosed = !shedInfo.state;
+        const autoAction = !(shedInfo.reason || '').toLowerCase().includes('override');
+        if (shedClosed && autoAction) {
+          alertEl.classList.add('visible');
+          alertMsgEl.textContent = shedInfo.reason || 'Shade closed to protect plants from intense sunlight.';
+        } else {
+          alertEl.classList.remove('visible');
+        }
+      }
+
+    } catch (err) {
+      console.warn('[AUTO] Status fetch failed:', err.message);
+    }
+  }
+
+  // ─── Fetch AI Detection Result ─────────────────────────────────
+  async function fetchAIResult() {
+    try {
+      const res  = await fetch(`${API_BASE}/ai-result`, { signal: AbortSignal.timeout(8000) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+
+      const disease    = data.disease_name    || "Unknown";
+      const confidence = parseInt(data.confidence)  || 0;
+      const rec        = data.recommendation  || "No recommendation.";
+      const status     = data.status          || "pending";
+      const time       = data.analysis_time;
+
+      // Disease name
+      const nameEl = document.getElementById("ai-disease-name");
+      if (nameEl) {
+        nameEl.textContent = disease;
+        nameEl.style.color = status === "healthy"
+          ? "var(--accent-green)"
+          : status === "diseased"
+          ? "var(--accent-red)"
+          : status === "error"
+          ? "var(--accent-yellow)"
+          : "var(--text-secondary)";
+      }
+
+      // Status badge
+      const badge = document.getElementById("ai-status-badge");
+      if (badge) {
+        badge.className    = `ai-badge ${status}`;
+        badge.textContent  = status.toUpperCase();
+      }
+
+      // Confidence ring (circumference = 2π×33 ≈ 207)
+      const ring = document.getElementById("confidence-ring");
+      const CIRCUMFERENCE = 207;
+      if (ring) {
+        const offset = CIRCUMFERENCE - (CIRCUMFERENCE * confidence / 100);
+        ring.style.strokeDashoffset = offset;
+        const col = confidence >= 75
+          ? "var(--accent-green)"
+          : confidence >= 45
+          ? "var(--accent-yellow)"
+          : "var(--accent-red)";
+        ring.style.stroke = col;
+        document.getElementById("confidence-label-ring").style.color = col;
+        document.getElementById("confidence-pct").style.color        = col;
+        document.getElementById("confidence-bar").style.background   = col;
+      }
+      document.getElementById("confidence-label-ring").textContent = confidence + "%";
+      document.getElementById("confidence-bar").style.width         = confidence + "%";
+      document.getElementById("confidence-pct").textContent         = confidence + "% confidence";
+
+      // Recommendation
+      document.getElementById("ai-recommendation").textContent = rec;
+
+      // Time
+      if (time) {
+        const dt = new Date(time);
+        document.getElementById("ai-analysis-time").textContent =
+          "Last analysis: " + dt.toLocaleTimeString();
+      }
+
+    } catch (err) {
+      console.warn("[AI] Fetch failed:", err.message);
+    }
+  }
+
+  // ─── Refresh Camera Image ──────────────────────────────────────
+  async function refreshCameraImage() {
+    try {
+      // Bust cache with timestamp
+      const ts  = Date.now();
+      const url = `${API_BASE}/latest-image?t=${ts}`;
+
+      const res = await fetch(url, { method: "HEAD", signal: AbortSignal.timeout(3000) });
+      if (!res.ok) return; // No image yet
+
+      const img = document.getElementById("camera-image");
+      const placeholder = document.getElementById("camera-placeholder");
+
+      img.src = url;
+      img.style.display = "block";
+      if (placeholder) placeholder.style.display = "none";
+
+      document.getElementById("cam-timestamp").textContent =
+        new Date().toLocaleTimeString();
+      lastImageTs = ts;
+
+    } catch (_) { /* no image or server unreachable */ }
+  }
+
+  // ─── Control Toggles ───────────────────────────────────────────
+  async function onToggleChange(key, value) {
+    // Manual actuator changes should not compete with Auto mode.
+    // If a user flips any non-pump control while Auto is enabled, switch to Manual first.
+    const autoToggle = document.getElementById('toggle-auto-mode');
+    if (key !== 'pump' && autoToggle && autoToggle.checked) {
+      await toggleAutoMode(false);
+      if (autoToggle.checked) {
+        showToast("❌", "Switch to Manual mode first to control actuators.", 4000);
+        controls[key] = !value;
+        updateControlUI(key, !value);
+        return;
+      }
+    }
+
+    // Lock this control from background updates for a few seconds
+    locks[key] = Date.now() + LOCK_DURATION;
+    controls[key] = value;
+    updateControlUI(key, value);
+    
+    // Only show override badge for things that are normally auto
+    if (key !== 'pump') {
+      setControlBadge(key, 'override');
+    }
+
+    // Retry logic: 2 attempts with a short delay
+    const maxRetries = 2;
+    let retryDelay = 1500;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const body = {};
+        body[key] = value;
+        const res = await fetch(`${API_BASE}/control`, {
+          method:  "POST",
+          headers: { "Content-Type": "application/json" },
+          body:    JSON.stringify(body),
+          signal:  AbortSignal.timeout(6000),  // 6s — fast fail, don't block UI
+        });
+        if (res.ok) {
+          showToast(
+            value ? "✅" : "⭕",
+            `${capitalize(key)} turned ${value ? "ON" : "OFF"}`
+          );
+          return;  // Success
+        } else {
+          throw new Error(`HTTP ${res.status}`);
+        }
+      } catch (err) {
+        console.warn(`[CONTROL] Attempt ${attempt}/${maxRetries} failed:`, err.message);
+        if (attempt < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, retryDelay));
+        }
+      }
+    }
+
+    // All retries failed
+    console.error("[CONTROL] All retries exhausted");
+    showToast("❌", `${key} control failed after ${maxRetries} attempts. Server may be unreachable.`, 5000);
+    // Revert toggle
+    controls[key] = !value;
+    updateControlUI(key, !value);
+  }
+
+  async function toggleAutoMode(isAuto) {
+    // Lock auto mode from background updates
+    locks.auto = Date.now() + LOCK_DURATION;
+
+    const amLabel = document.getElementById('auto-mode-label');
+    if (amLabel) {
+      amLabel.textContent = isAuto ? 'Auto' : 'Manual';
+      amLabel.style.color = isAuto ? 'var(--accent-green)' : 'var(--accent-yellow)';
+    }
+
+    // Enable/Disable pump control based on mode
+    updatePumpLockState(isAuto);
+
+    try {
+      const res = await fetch(`${API_BASE}/dashboard-settings`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ auto_mode: isAuto })
+      });
+      if (res.ok) {
+        showToast("⚙️", `System switched to ${isAuto ? "Auto" : "Manual"} Mode`);
+      } else {
+        throw new Error("Save failed");
+      }
+    } catch (err) {
+      console.error("[AUTO MODE] Failed to save:", err);
+      showToast("❌", "Failed to save System Mode");
+      // Revert toggle
+      document.getElementById('toggle-auto-mode').checked = !isAuto;
+      if (amLabel) {
+        amLabel.textContent = !isAuto ? 'Auto' : 'Manual';
+        amLabel.style.color = !isAuto ? 'var(--accent-green)' : 'var(--accent-yellow)';
+      }
+    }
+  }
+
+  function toggleControl(key) {
+    const checkbox = document.getElementById(`toggle-${key}`);
+    if (checkbox) {
+      checkbox.checked = !checkbox.checked;
+      onToggleChange(key, checkbox.checked);
+    }
+  }
+
+  function updateControlUI(key, value) {
+    const checkbox = document.getElementById(`toggle-${key}`);
+    const stateEl  = document.getElementById(`state-${key}`);
+
+    if (checkbox) checkbox.checked = value;
+    if (stateEl)  stateEl.textContent = value ? "ON" : "OFF";
+
+    // Shed badge
+    if (key === "shed") {
+      const badge = document.getElementById("shed-badge");
+      if (badge) {
+        badge.className   = `shed-badge ${value ? "open" : "closed"}`;
+        badge.textContent = value ? "● OPEN" : "● CLOSED";
+      }
+    }
+  }
+
+  function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+
+  function updatePumpLockState(isAuto) {
+    const row  = document.getElementById('row-pump');
+    const tgl  = document.getElementById('toggle-pump');
+    const bge  = row ? row.querySelector('.always-on') : null;
+
+    if (isAuto) {
+      if (row) {
+        row.classList.add('pump-locked');
+        row.onclick = null;
+        row.title = "Pump always runs continuously in Auto mode — switch to Manual to control.";
+      }
+      if (tgl) {
+        tgl.disabled = true;
+      }
+      if (bge) bge.style.display = 'inline-block';
+    } else {
+      if (row) {
+        row.classList.remove('pump-locked');
+        row.onclick = () => toggleControl('pump');
+        row.title = "Manual pump control active";
+      }
+      if (tgl) tgl.disabled = false;
+      if (bge) bge.style.display = 'none';
+    }
+  }
+
+  // ─── Chart Tab Switching ─────────────────────────────────────────
+  const TABS = ['env', 'water', 'light', 'actuators', 'patterns'];
+  function switchTab(id) {
+    TABS.forEach(t => {
+      document.getElementById('tab-' + t).classList.toggle('active', t === id);
+      document.getElementById('panel-' + t).classList.toggle('visible', t === id);
+    });
+  }
+
+  // ─── Chart Factory ─────────────────────────────────────────────
+  // Global chart defaults for dark theme
+  Chart.defaults.color            = '#415d7a';
+  Chart.defaults.font.family      = "'JetBrains Mono', monospace";
+  Chart.defaults.font.size        = 10;
+  Chart.defaults.plugins.legend.display  = false;
+  Chart.defaults.plugins.tooltip.backgroundColor = '#111927';
+  Chart.defaults.plugins.tooltip.borderColor      = 'rgba(56,148,255,0.3)';
+  Chart.defaults.plugins.tooltip.borderWidth      = 1;
+  Chart.defaults.plugins.tooltip.titleColor       = '#e8f0fe';
+  Chart.defaults.plugins.tooltip.bodyColor        = '#7a9bc4';
+  Chart.defaults.plugins.tooltip.padding          = 10;
+  Chart.defaults.plugins.tooltip.cornerRadius     = 8;
+  Chart.defaults.animation.duration   = 400;
+  Chart.defaults.elements.line.tension = 0.42;
+  Chart.defaults.elements.point.radius = 0;
+  Chart.defaults.elements.point.hoverRadius = 4;
+
+  function makeLineChart(canvasId, color, unit, minY, maxY, optMin, optMax) {
+    const ctx = document.getElementById(canvasId);
+    if (!ctx) return null;
+
+    // Build annotation plugin data for optimal range band
+    const plugins = { legend: { display: false } };
+
+    const ds = {
+      label: unit,
+      data: [],
+      borderColor: color,
+      borderWidth: 2,
+      backgroundColor: hexToRgba(color, 0.08),
+      fill: true,
+      pointHoverBackgroundColor: color,
+      pointHoverBorderColor: '#fff',
+      pointHoverBorderWidth: 2,
+    };
+
+    // Optimal-range reference lines (as data annotation via dataset)
+    const dsOptUpper = { label:'opt-upper', data:[], borderColor: hexToRgba(color, 0.2), borderWidth:1, borderDash:[4,4], pointRadius:0, fill: false };
+    const dsOptLower = { label:'opt-lower', data:[], borderColor: hexToRgba(color, 0.2), borderWidth:1, borderDash:[4,4], pointRadius:0, fill: '+1', backgroundColor: hexToRgba(color, 0.05) };
+
+    return new Chart(ctx, {
+      type: 'line',
+      data: { labels: [], datasets: [dsOptUpper, dsOptLower, ds] },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        scales: {
+          x: {
+            grid:   { color: 'rgba(56,148,255,0.05)', drawBorder: false },
+            ticks:  { maxTicksLimit: 6, color: '#415d7a' },
+          },
+          y: {
+            min: minY, max: maxY,
+            grid:   { color: 'rgba(56,148,255,0.07)', drawBorder: false },
+            ticks:  { maxTicksLimit: 5, color: '#415d7a', callback: v => v + unit },
+          },
+        },
+        plugins,
+      },
+      // Store meta for updates
+      _optMin: optMin, _optMax: optMax,
+    });
+  }
+
+  function makeActuatorChart(canvasId) {
+    const ctx = document.getElementById(canvasId);
+    if (!ctx) return null;
+    return new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [
+          { label: 'Pump',  data: [], borderColor: '#22d77a', backgroundColor: 'rgba(34,215,122,0.07)', fill:true, borderWidth:2, stepped:'before', pointRadius:0 },
+          { label: 'Light', data: [], borderColor: '#3b9dff', backgroundColor: 'rgba(59,157,255,0.07)', fill:true, borderWidth:2, stepped:'before', pointRadius:0 },
+          { label: 'Mist',  data: [], borderColor: '#22e5e5', backgroundColor: 'rgba(34,229,229,0.07)', fill:true, borderWidth:2, stepped:'before', pointRadius:0 },
+          { label: 'Shed',  data: [], borderColor: '#ff8c42', backgroundColor: 'rgba(255,140,66,0.07)',  fill:true, borderWidth:2, stepped:'before', pointRadius:0 },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: {
+            display: true,
+            position: 'top',
+            labels: { color: '#7a9bc4', boxWidth: 12, padding: 16, font: { size: 11 } },
+          },
+        },
+        scales: {
+          x: {
+            grid: { color: 'rgba(56,148,255,0.05)' },
+            ticks: { maxTicksLimit: 8, color: '#415d7a' },
+          },
+          y: {
+            min: -0.1, max: 1.1,
+            grid: { color: 'rgba(56,148,255,0.07)' },
+            ticks: {
+              maxTicksLimit: 3, color: '#415d7a',
+              callback: v => v === 1 ? 'ON' : v === 0 ? 'OFF' : '',
+            },
+          },
+        },
+      },
+    });
+  }
+
+  function hexToRgba(hex, a) {
+    const r = parseInt(hex.slice(1,3),16);
+    const g = parseInt(hex.slice(3,5),16);
+    const b = parseInt(hex.slice(5,7),16);
+    return `rgba(${r},${g},${b},${a})`;
+  }
+
+  // ─── Scatter chart factory ─────────────────────────────────────
+  function makeScatterChart(canvasId, pointColor, xLabel, yLabel, xUnit, yUnit) {
+    const ctx = document.getElementById(canvasId);
+    if (!ctx) return null;
+    return new Chart(ctx, {
+      type: 'scatter',
+      data: {
+        datasets: [{
+          label: `${xLabel} vs ${yLabel}`,
+          data: [],
+          backgroundColor: hexToRgba(pointColor, 0.55),
+          borderColor:     hexToRgba(pointColor, 0.85),
+          borderWidth: 1,
+          pointRadius: 4,
+          pointHoverRadius: 6,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: {
+            title: { display: true, text: xLabel + (xUnit ? ` (${xUnit})` : ''), color: '#415d7a', font:{size:10} },
+            grid: { color: 'rgba(56,148,255,0.06)' },
+            ticks: { color: '#415d7a', callback: v => v + (xUnit || '') },
+          },
+          y: {
+            title: { display: true, text: yLabel + (yUnit ? ` (${yUnit})` : ''), color: '#415d7a', font:{size:10} },
+            grid: { color: 'rgba(56,148,255,0.06)' },
+            ticks: { color: '#415d7a', callback: v => v + (yUnit || '') },
+          },
+        },
+      },
+    });
+  }
+
+  // ─── Dual-axis overlay chart factory ───────────────────────────
+  function makeDualAxisChart(canvasId) {
+    const ctx = document.getElementById(canvasId);
+    if (!ctx) return null;
+    return new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [
+          // Left axis (%) — sunlight & humidity
+          {
+            label: 'Sunlight %', data: [], yAxisID: 'pct',
+            borderColor: '#f5c842', backgroundColor: 'rgba(245,200,66,0.07)',
+            borderWidth: 2.5, fill: true, tension: 0.42, pointRadius: 0,
+          },
+          {
+            label: 'Humidity %', data: [], yAxisID: 'pct',
+            borderColor: '#22e5e5', backgroundColor: 'rgba(34,229,229,0.05)',
+            borderWidth: 1.5, borderDash: [4,3], fill: false, tension: 0.42, pointRadius: 0,
+          },
+          // Right axis (°C) — air temp
+          {
+            label: 'Air Temp °C', data: [], yAxisID: 'temp',
+            borderColor: '#3b9dff', backgroundColor: 'rgba(59,157,255,0.07)',
+            borderWidth: 2, fill: true, tension: 0.42, pointRadius: 0,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: {
+            display: true, position: 'top',
+            labels: { color: '#7a9bc4', boxWidth: 14, padding: 18, font: { size: 11 } },
+          },
+        },
+        scales: {
+          x: {
+            grid: { color: 'rgba(56,148,255,0.05)' },
+            ticks: { maxTicksLimit: 8, color: '#415d7a' },
+          },
+          pct: {
+            type: 'linear', position: 'left', min: 0, max: 100,
+            grid: { color: 'rgba(56,148,255,0.07)' },
+            ticks: { maxTicksLimit: 5, color: '#415d7a', callback: v => v + '%' },
+          },
+          temp: {
+            type: 'linear', position: 'right', min: 0, max: 50,
+            grid: { drawOnChartArea: false },
+            ticks: { maxTicksLimit: 5, color: '#3b9dff', callback: v => v + '°C' },
+          },
+        },
+      },
+    });
+  }
+
+  // ─── Initialise all charts ────────────────────────────────────────
+  const charts = {};
+
+  function initCharts() {
+    charts.airTemp    = makeLineChart('chart-air-temp',    '#3b9dff', '°C',   0,  45,  18, 21);
+    charts.humidity   = makeLineChart('chart-humidity',    '#22e5e5', '%',    0, 100,  50, 70);
+    charts.waterTemp  = makeLineChart('chart-water-temp',  '#22d77a', '°C',   0,  40,  18, 22);
+    charts.ph         = makeLineChart('chart-ph',          '#a855f7', '',     0,  14, 5.5,  6);
+    charts.tds        = makeLineChart('chart-tds',         '#3b9dff', 'ppm',  0,2000, 560,840);
+    charts.waterLevel = makeLineChart('chart-water-level', '#22e5e5', '%',    0, 100,  60,100);
+    charts.sunlight   = makeLineChart('chart-sunlight',    '#f5c842', '%',    0, 100,   0, 40);
+    charts.actuators  = makeActuatorChart('chart-actuators');
+    // Patterns tab
+    charts.overlay      = makeDualAxisChart('chart-overlay');
+    charts.scatterTemp  = makeScatterChart('chart-scatter-temp', '#ff8c42', 'Sunlight', 'Air Temp', '%', '°C');
+    charts.scatterHum   = makeScatterChart('chart-scatter-hum',  '#22e5e5', 'Sunlight', 'Humidity', '%', '%');
+  }
+
+  // ─── Update a line chart with new history data ────────────────────
+  function updateLineChart(chart, labels, values, curId) {
+    if (!chart) return;
+    const n = labels.length;
+    chart.data.labels = labels;
+    // Optimal lines
+    const optMin = chart._optMin, optMax = chart._optMax;
+    chart.data.datasets[0].data = Array(n).fill(optMax);
+    chart.data.datasets[1].data = Array(n).fill(optMin);
+    // Real data
+    chart.data.datasets[2].data = values;
+    chart.update('none');
+
+    // Update current value badge
+    const cur = values[values.length - 1];
+    const el  = document.getElementById(curId);
+    if (el && cur !== undefined) el.textContent = Number(cur).toFixed(cur >= 100 ? 0 : 1);
+  }
+
+  // ─── Fetch History & Update All Charts ────────────────────────
+  const HISTORY_INTERVAL_MS  = 10000;  // Charts every 10 s (was 5s)
+  const INSIGHTS_INTERVAL_MS = 25000;  // Insights every 25 s (was 8s)
+
+  async function fetchAndUpdateCharts() {
+    try {
+      const res = await fetch(`${API_BASE}/history?n=60`, { signal: AbortSignal.timeout(6000) });
+      if (!res.ok) return;
+      const { labels, datasets: ds } = await res.json();
+      if (!labels || labels.length === 0) return;
+
+      // ── Environment tab ──
+      updateLineChart(charts.airTemp,   labels, ds.air_temperature,   'cur-air-temp');
+      updateLineChart(charts.humidity,  labels, ds.humidity,          'cur-humidity');
+      updateLineChart(charts.waterTemp, labels, ds.water_temperature, 'cur-water-temp');
+
+      // ── Water quality tab ──
+      updateLineChart(charts.ph,         labels, ds.ph,          'cur-ph');
+      updateLineChart(charts.tds,        labels, ds.tds,         'cur-tds');
+      updateLineChart(charts.waterLevel, labels, ds.water_level, 'cur-water-level');
+
+      // ── Light tab ──
+      updateLineChart(charts.sunlight, labels, ds.sunlight, 'cur-sunlight');
+
+      // ── Actuator chart ──
+      if (charts.actuators) {
+        charts.actuators.data.labels = labels;
+        charts.actuators.data.datasets[0].data = ds.pump;
+        charts.actuators.data.datasets[1].data = ds.light;
+        charts.actuators.data.datasets[2].data = ds.mist;
+        charts.actuators.data.datasets[3].data = ds.shed;
+        charts.actuators.update('none');
+      }
+
+      // ── Stat cards ──
+      const last = n => ds[n] && ds[n].length > 0 ? ds[n][ds[n].length - 1] : null;
+      const prev = n => ds[n] && ds[n].length > 1 ? ds[n][ds[n].length - 2] : null;
+
+      function setStatCard(valId, deltaId, key, unit, decimals) {
+        const cur = last(key), pre = prev(key);
+        const vEl = document.getElementById(valId);
+        const dEl = document.getElementById(deltaId);
+        if (vEl && cur !== null) vEl.textContent = Number(cur).toFixed(decimals) + (unit || '');
+        if (dEl && cur !== null && pre !== null) {
+          const diff = cur - pre;
+          const sign = diff > 0 ? '+' : '';
+          const cls  = diff > 0.01 ? 'up' : diff < -0.01 ? 'down' : 'flat';
+          const arrow = diff > 0.01 ? '▲' : diff < -0.01 ? '▼' : '―';
+          dEl.className = 'stat-delta ' + cls;
+          dEl.textContent = arrow + ' ' + sign + diff.toFixed(decimals) + (unit || '') + ' vs prev';
+        }
+      }
+
+      setStatCard('sg-air-temp',  'sg-air-temp-d',  'air_temperature',   '°C', 1);
+      setStatCard('sg-humidity',  'sg-humidity-d',  'humidity',          '%',   1);
+      setStatCard('sg-water-temp','sg-water-temp-d','water_temperature', '°C', 1);
+      setStatCard('sg-ph',        'sg-ph-d',        'ph',                '',    2);
+      setStatCard('sg-tds',       'sg-tds-d',       'tds',               ' ppm',0);
+      setStatCard('sg-wlevel',    'sg-wlevel-d',    'water_level',       '%',   0);
+      setStatCard('sg-sunlight',  'sg-sunlight-d',  'sunlight',          '%',   0);
+
+      // Light tab status vals
+      const lightOn = last('light'); const shedOpen = last('shed');
+      const lEl = document.getElementById('sg-light-state');
+      const sEl = document.getElementById('sg-shed-state');
+      if (lEl) { lEl.textContent = lightOn ? 'ON 💡' : 'OFF'; lEl.style.color = lightOn ? 'var(--accent-green)' : 'var(--text-muted)'; }
+      if (sEl) { sEl.textContent = shedOpen ? 'OPEN' : 'CLOSED 🚫'; sEl.style.color = shedOpen ? 'var(--accent-green)' : 'var(--accent-orange)'; }
+
+      // Actuator tab status vals
+      ['light','mist','shed'].forEach((k, i) => {
+        const idMap = { light:'sg-la-light', mist:'sg-la-mist', shed:'sg-la-shed' };
+        const el = document.getElementById(idMap[k]);
+        const val = last(k);
+        if (el) { el.textContent = val ? 'ON' : (k === 'shed' ? 'CLOSED' : 'OFF'); el.style.color = val ? 'var(--accent-green)' : 'var(--text-muted)'; }
+      });
+
+    } catch (err) {
+      console.warn('[CHART] History fetch failed:', err.message);
+    }
+  }
+
+  // ─── Fetch Insights & Update Patterns Tab ──────────────────────
+
+  async function fetchAndUpdateInsights() {
+    try {
+      const res = await fetch(`${API_BASE}/insights`, { signal: AbortSignal.timeout(6000) });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.error) return;  // not enough data yet
+
+      const cs  = data.condition_stats  || {};
+      const cor = data.correlations     || {};
+
+      // ── Condition cards ────────────────────────────────────
+      function fillCond(prefix, cond) {
+        const c = cs[cond] || {};
+        const pEl = document.getElementById(`cond-${prefix}-pct`);
+        if (pEl) pEl.textContent = (c.pct ?? 0) + '% of session';
+        const fields = [
+          ['temp', 'air_temperature', '°C'],
+          ['hum',  'humidity',        '%'],
+          ['wt',   'water_temperature','°C'],
+        ];
+        fields.forEach(([id, key, u]) => {
+          const el = document.getElementById(`cond-${prefix}-${id}`);
+          if (el) el.textContent = c[key] != null ? Number(c[key]).toFixed(1) + u : '—';
+        });
+      }
+      fillCond('sunny',  'sunny');
+      fillCond('mod',    'moderate');
+      fillCond('cloudy', 'cloudy');
+
+      // ── Correlation badges ────────────────────────────────────
+      const corrT = document.getElementById('cur-corr-temp');
+      const corrH = document.getElementById('cur-corr-hum');
+      if (corrT) corrT.textContent = 'r = ' + (cor.air_temperature ?? '—');
+      if (corrH) corrH.textContent = 'r = ' + (cor.humidity       ?? '—');
+
+      // ── Overlay chart ─────────────────────────────────────────
+      // Re-use history data (already fetched by fetchAndUpdateCharts)
+      try {
+        const hr = await fetch(`${API_BASE}/history?n=60`, { signal: AbortSignal.timeout(5000) });
+        if (hr.ok) {
+          const { labels, datasets: hds } = await hr.json();
+          if (charts.overlay && labels && labels.length > 0) {
+            charts.overlay.data.labels = labels;
+            charts.overlay.data.datasets[0].data = hds.sunlight;
+            charts.overlay.data.datasets[1].data = hds.humidity;
+            charts.overlay.data.datasets[2].data = hds.air_temperature;
+            charts.overlay.update('none');
+          }
+        }
+      } catch(_) {}
+
+      // ── Scatter charts ────────────────────────────────────────
+      const scatter = data.scatter || [];
+      if (charts.scatterTemp) {
+        charts.scatterTemp.data.datasets[0].data = scatter.map(p => ({ x: p.x, y: p.y }));
+        charts.scatterTemp.update('none');
+      }
+      if (charts.scatterHum) {
+        // Re-use scatter endpoint but y = humidity
+        // We'll re-fetch history for this
+        try {
+          const sh = await fetch(`${API_BASE}/history?n=60`, { signal: AbortSignal.timeout(5000) });
+          if (sh.ok) {
+            const { datasets: shd } = await sh.json();
+            const humScatter = (shd.sunlight || []).map((s, i) => ({ x: s, y: (shd.humidity || [])[i] || 0 }));
+            charts.scatterHum.data.datasets[0].data = humScatter;
+            charts.scatterHum.update('none');
+          }
+        } catch(_) {}
+      }
+
+      // ── Insights feed ──────────────────────────────────────────
+      const ptEl = document.getElementById('insight-datapts');
+      if (ptEl) ptEl.textContent = `${data.data_points} readings analysed`;
+
+      const feed = document.getElementById('insights-feed');
+      if (feed && data.insights && data.insights.length > 0) {
+        const levelStyle = {
+          ok:       { bg: 'rgba(34,215,122,0.07)',  border: 'rgba(34,215,122,0.25)',  col: '#22d77a' },
+          info:     { bg: 'rgba(59,157,255,0.07)',  border: 'rgba(59,157,255,0.25)',  col: '#3b9dff' },
+          warning:  { bg: 'rgba(245,200,66,0.08)',  border: 'rgba(245,200,66,0.3)',   col: '#f5c842' },
+          critical: { bg: 'rgba(255,92,92,0.09)',   border: 'rgba(255,92,92,0.35)',   col: '#ff5c5c' },
+        };
+        feed.innerHTML = data.insights.map(ins => {
+          const s = levelStyle[ins.level] || levelStyle.info;
+          return `<div style="display:flex; gap:10px; align-items:flex-start;
+                              padding:0.65rem 0.9rem; border-radius:10px;
+                              background:${s.bg}; border:1px solid ${s.border};
+                              font-size:0.8rem; color:var(--text-secondary); line-height:1.5;">
+            <span style="font-size:1.1rem; flex-shrink:0; margin-top:1px;">${ins.icon}</span>
+            <span>${ins.text}</span>
+          </div>`;
+        }).join('');
+      }
+
+    } catch (err) {
+      console.warn('[INSIGHTS] Fetch failed:', err.message);
+    }
+  }
+
+  // ─── Bootstrap ─────────────────────────────────────────────────
+  (async function init() {
+    // Pump toggle locked ON at start
+    const pumpToggle = document.getElementById('toggle-pump');
+    if (pumpToggle) { pumpToggle.checked = true; pumpToggle.disabled = true; }
+
+    // Init charts
+    initCharts();
+
+    // Initial fetches — staggered to avoid hammering cold server simultaneously
+    fetchSensorData();
+    await new Promise(r => setTimeout(r, 300));
+    fetchAutoStatus();
+    await new Promise(r => setTimeout(r, 300));
+    fetchAndRenderPlants();
+    await new Promise(r => setTimeout(r, 500));
+    fetchAndUpdateCharts();
+    await new Promise(r => setTimeout(r, 500));
+    fetchAIResult();
+    // Non-critical ones deferred further
+    setTimeout(refreshCameraImage,      2000);
+    setTimeout(fetchAndUpdateInsights,  3000);
+
+    // WebSocket init
+    initWebSocket();
+
+    // Load tank configuration
+    await loadTankConfig();
+    await loadMonthlyData();
+
+    // Polling intervals — staggered starts to spread server load
+    setInterval(fetchSensorData,          SENSOR_INTERVAL_MS);
+    setTimeout(() => setInterval(fetchAutoStatus, AUTO_INTERVAL_MS),          1200);
+    setTimeout(() => setInterval(fetchAIResult,            AI_INTERVAL_MS),   2100);
+    setTimeout(() => setInterval(refreshCameraImage,       IMAGE_INTERVAL_MS),2800);
+    setTimeout(() => setInterval(fetchAndUpdateCharts,     HISTORY_INTERVAL_MS), 3500);
+    setTimeout(() => setInterval(fetchAndUpdateInsights,   INSIGHTS_INTERVAL_MS),4200);
+    setTimeout(() => setInterval(fetchPlantAlerts,         15000),             5000);
+    setTimeout(() => setInterval(fetchAndRenderPlants,     60000),             6000);
+    setInterval(loadMonthlyData, 5 * 60 * 1000);
+  })();
+
+  // ═══════════════════════════════════════════════════════════════
+  //  PLANT MANAGEMENT SYSTEM
+  // ═══════════════════════════════════════════════════════════════
+
+  // In-memory cache of plant data
+  let plantCache    = {};
+  let activePlantKey = 'lettuce';
+
+  // ─── Fetch all plants & render selectors ─────────────────────
+  async function fetchAndRenderPlants() {
+    try {
+      const res  = await fetch(`${API_BASE}/plants`, { signal: AbortSignal.timeout(5000) });
+      if (!res.ok) return;
+      const data = await res.json();
+      plantCache      = data.plants   || {};
+      activePlantKey  = data.selected || 'lettuce';
+      renderPlantSelectors();
+      renderActivePlant();
+    } catch (e) {
+      console.warn('[PLANT] Fetch failed:', e.message);
+    }
+  }
+
+  function renderPlantSelectors() {
+    const opts = Object.entries(plantCache).map(([key, p]) =>
+      `<option value="${key}">${p.emoji || '🌱'} ${p.display_name || key}</option>`
+    ).join('');
+
+    const sel  = document.getElementById('plant-selector');
+    const ssel = document.getElementById('settings-plant-selector');
+
+    if (sel) {
+      sel.innerHTML = opts;
+      sel.value     = activePlantKey;
+    }
+    if (ssel) {
+      ssel.innerHTML = opts;
+      ssel.value     = activePlantKey;
+      loadPlantEditor(activePlantKey);
+    }
+  }
+
+  function renderActivePlant() {
+    const plant = plantCache[activePlantKey];
+    if (!plant) return;
+
+    // Plant panel display
+    const emoji = document.getElementById('plant-emoji');
+    const name  = document.getElementById('plant-name-display');
+    if (emoji) { emoji.textContent = plant.emoji || '🌱'; }
+    if (name)  { name.textContent  = plant.display_name || activePlantKey; }
+
+    // Condition pills
+    const tMin = plant.temperature_min, tMax = plant.temperature_max;
+    const hMin = plant.humidity_min,    hMax = plant.humidity_max;
+    const pMin = plant.ph_min,          pMax = plant.ph_max;
+    const dMin = plant.tds_min,         dMax = plant.tds_max;
+
+    const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
+    set('cond-temp',    `🌡️ ${tMin}–${tMax}°C`);
+    set('cond-hum',     `💧 ${hMin}–${hMax}%`);
+    set('cond-ph-pill', `⚗️ pH ${pMin}–${pMax}`);
+    set('cond-tds-pill',`🧪 ${dMin}–${dMax} ppm`);
+
+    // Update chart optimal bands dynamically
+    if (charts.airTemp)   { charts.airTemp._optMin   = tMin; charts.airTemp._optMax   = tMax; }
+    if (charts.humidity)  { charts.humidity._optMin  = hMin; charts.humidity._optMax  = hMax; }
+    if (charts.ph)        { charts.ph._optMin        = pMin; charts.ph._optMax        = pMax; }
+    if (charts.tds)       { charts.tds._optMin       = dMin; charts.tds._optMax       = dMax; }
+  }
+
+  // ─── Color sensor cards based on plant thresholds ────────────
+  function updateSensorCardColors(sensorData) {
+    const plant = plantCache[activePlantKey];
+    if (!plant) return;
+
+    function applyAlert(cardId, val, lo, hi) {
+      const card = document.getElementById(cardId);
+      if (!card) return;
+      card.classList.remove('alert-warn', 'alert-crit');
+      if (val === null || val === undefined) return;
+      const margin = (hi - lo) * 0.1;  // 10% margin before critical
+      if (val < lo - margin || val > hi + margin) {
+        card.classList.add('alert-crit');
+      } else if (val < lo || val > hi) {
+        card.classList.add('alert-warn');
+      }
+    }
+
+    applyAlert('card-air-temp',   sensorData.air_temperature,  plant.temperature_min, plant.temperature_max);
+    applyAlert('card-humidity',   sensorData.humidity,          plant.humidity_min,    plant.humidity_max);
+    applyAlert('card-ph',         sensorData.ph,                plant.ph_min,          plant.ph_max);
+    applyAlert('card-tds',        sensorData.tds,               plant.tds_min,         plant.tds_max);
+  }
+
+  // ─── Select plant from dropdown ──────────────────────────────
+  async function selectPlant(key) {
+    if (!key || key === activePlantKey) return;
+    try {
+      const res = await fetch(`${API_BASE}/set-plant`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ plant: key }),
+      });
+      if (res.ok) {
+        activePlantKey = key;
+        renderActivePlant();
+        // Sync modal selector
+        const ssel = document.getElementById('settings-plant-selector');
+        if (ssel) { ssel.value = key; loadPlantEditor(key); }
+        const emoji = (plantCache[key] || {}).emoji || '🌱';
+        const dname = (plantCache[key] || {}).display_name || key;
+        showToast(emoji, `Switched to ${dname}`);
+      }
+    } catch (e) {
+      showToast('❌', 'Failed to switch plant');
+    }
+  }
+
+  // ─── Settings Modal ───────────────────────────────────────────
+  function openSettings(sectionId) {
+    document.getElementById('settings-overlay').classList.add('open');
+    document.getElementById('settings-modal').classList.add('open');
+    renderPlantSelectors();
+    loadPlantEditor(activePlantKey);
+    if (sectionId) {
+      // Slight delay so the modal is visible before scrolling
+      setTimeout(() => scrollToSec(sectionId), 150);
+    }
+  }
+
+  function scrollToSec(id) {
+    const el = document.getElementById(id);
+    const modal = document.getElementById('settings-modal');
+    if (el && modal) {
+      modal.scrollTo({ top: el.offsetTop - 130, behavior: 'smooth' });
+      // Highlight nav button
+      document.querySelectorAll('.snav-btn').forEach(b => b.classList.remove('active'));
+    }
+  }
+
+  function closeSettings() {
+    document.getElementById('settings-overlay').classList.remove('open');
+    document.getElementById('settings-modal').classList.remove('open');
+  }
+
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSettings(); });
+
+  // ─── Load plant data into editor fields ───────────────────────
+  function loadPlantEditor(key) {
+    const p = plantCache[key];
+    if (!p) return;
+    const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = (val !== undefined && val !== null) ? val : ''; };
+    // Plant conditions
+    set('s-temp-min', p.temperature_min);   set('s-temp-max', p.temperature_max);
+    set('s-hum-min',  p.humidity_min);      set('s-hum-max',  p.humidity_max);
+    set('s-wt-min',   p.water_temp_min);    set('s-wt-max',   p.water_temp_max);
+    set('s-ph-min',   p.ph_min);            set('s-ph-max',   p.ph_max);
+    set('s-tds-min',  p.tds_min);           set('s-tds-max',  p.tds_max);
+    // Water level alerts
+    set('s-wl-warn',  p.water_level_warn  ?? 50);
+    set('s-wl-crit',  p.water_level_crit  ?? 25);
+    // Sunlight/shade thresholds
+    set('s-light-on',   p.light_on_threshold   ?? 40);
+    set('s-light-off',  p.light_off_threshold  ?? 55);
+    set('s-shed-close', p.shed_close_threshold ?? 70);
+    set('s-shed-open',  p.shed_open_threshold  ?? 50);
+  }
+
+  // ─── Save edited conditions ───────────────────────────────────
+  async function saveConditions() {
+    const sel = document.getElementById('settings-plant-selector');
+    const key = sel ? sel.value : activePlantKey;
+    const get = id => { const v = document.getElementById(id)?.value; return v !== '' ? parseFloat(v) : undefined; };
+    const getI = id => { const v = document.getElementById(id)?.value; return v !== '' ? parseInt(v) : undefined; };
+
+    const payload = {
+      key,
+      temperature_min:       get('s-temp-min'),  temperature_max:       get('s-temp-max'),
+      humidity_min:          get('s-hum-min'),   humidity_max:          get('s-hum-max'),
+      water_temp_min:        get('s-wt-min'),    water_temp_max:        get('s-wt-max'),
+      ph_min:                get('s-ph-min'),    ph_max:                get('s-ph-max'),
+      tds_min:               get('s-tds-min'),   tds_max:               get('s-tds-max'),
+      water_level_warn:      getI('s-wl-warn'),  water_level_crit:      getI('s-wl-crit'),
+      light_on_threshold:    getI('s-light-on'), light_off_threshold:   getI('s-light-off'),
+      shed_close_threshold:  getI('s-shed-close'), shed_open_threshold: getI('s-shed-open'),
+    };
+    // Remove undefined keys
+    Object.keys(payload).forEach(k => payload[k] === undefined && delete payload[k]);
+
+    const btn = document.getElementById('save-conditions-btn');
+    if (btn) { btn.textContent = 'Saving…'; btn.disabled = true; }
+
+    try {
+      const res = await fetch(`${API_BASE}/update-plant`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        plantCache[key] = data.plant;
+        if (key === activePlantKey) renderActivePlant();
+        showToast('✅', `Saved: ${data.plant?.display_name || key}`);
+      } else {
+        const err = await res.json();
+        showToast('❌', err.error || 'Save failed');
+      }
+    } catch (e) {
+      showToast('❌', 'Network error while saving');
+    } finally {
+      if (btn) { btn.textContent = '✓ Save All Conditions'; btn.disabled = false; }
+    }
+  }
+
+
+  // ─── Tank Configuration Functions ────────────────────────────────────────
+// Tank Configuration Functions
+
+// Load tank configuration from server
+async function loadTankConfig() {
+  try {
+    const res = await fetch(`${API_BASE}/tank-config`);
+    if (res.ok) {
+      const cfg = await res.json();
+      const setField = (id, val) => {
+        const el = document.getElementById(id);
+        if (el) el.value = val || '';
+      };
+      setField('s-tank-height', cfg.tank_height_cm);
+      setField('s-tank-width', cfg.tank_width_cm);
+      setField('s-tank-length', cfg.tank_length_cm);
+      setField('s-sensor-offset', cfg.sensor_offset_cm);
+    }
+  } catch (e) {
+    console.warn('[TANK] Failed to load tank config:', e);
+  }
+}
+
+// Save tank configuration to server
+async function saveTankConfig() {
+  const get = id => {
+    const v = document.getElementById(id)?.value;
+    return v !== '' && v !== null ? parseFloat(v) : undefined;
+  };
+
+  const height = get('s-tank-height');
+  const width = get('s-tank-width');
+  const length = get('s-tank-length');
+  const offset = get('s-sensor-offset');
+
+  if (!height || !width || !length || height <= 0 || width <= 0 || length <= 0) {
+    showToast('⚠️', 'Tank dimensions must be positive numbers');
+    return;
+  }
+
+  const payload = {
+    tank_height_cm: height,
+    tank_width_cm: width,
+    tank_length_cm: length,
+    sensor_offset_cm: offset || 0,
+  };
+
+  const buttons = document.querySelectorAll('[onclick="saveTankConfig()"]');
+  buttons.forEach(b => { b.textContent = 'Saving…'; b.disabled = true; });
+
+  try {
+    const res = await fetch(`${API_BASE}/tank-config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const tankVolume = (data.tank_height_cm * data.tank_width_cm * data.tank_length_cm) / 1000;
+      showToast('✅', `Tank config saved: ${tankVolume.toFixed(1)}L capacity`);
+      updateWaterLevelDisplay();
+    } else {
+      const err = await res.json();
+      showToast('❌', err.error || 'Save failed');
+    }
+  } catch (e) {
+    showToast('❌', 'Network error while saving tank config');
+  } finally {
+    buttons.forEach(b => { b.textContent = '✓ Save Tank Config'; b.disabled = false; });
+  }
+}
+
+
+
+  // ─── Load Monthly Data ────────────────────────────────────────
+  async function loadMonthlyData() {
+    const daysInput = document.getElementById('monthly-days-input');
+    const days = daysInput ? parseInt(daysInput.value) : 30;
+    
+    try {
+      const res = await fetch(`${API_BASE}/monthly-data?days=${days}`);
+      if (!res.ok) {
+        console.warn('[MONTHLY] Failed to load monthly data:', res.status);
+        return;
+      }
+      
+      const data = await res.json();
+      if (!data.labels || !data.datasets) {
+        console.warn('[MONTHLY] Invalid monthly data structure');
+        return;
+      }
+      
+      // Update summary stats
+      const updateStat = (elementId, values) => {
+        if (values && values.length > 0) {
+          const avg = values.reduce((a, b) => a + b, 0) / values.length;
+          const el = document.getElementById(elementId);
+          if (el) el.textContent = avg.toFixed(1);
+        }
+      };
+      
+      updateStat('monthly-avg-temp', data.datasets.air_temperature);
+      updateStat('monthly-avg-humidity', data.datasets.humidity);
+      updateStat('monthly-avg-ph', data.datasets.ph);
+      updateStat('monthly-avg-tds', data.datasets.tds);
+      updateStat('monthly-avg-wl', data.datasets.water_level);
+      updateStat('monthly-avg-sun', data.datasets.sunlight);
+      
+      // Update Charts
+      updateMonthlyChart('monthly-chart-temp', data.labels, data.datasets.air_temperature, '🌡️ Temperature (°C)', '#ff8c42');
+      updateMonthlyChart('monthly-chart-humidity', data.labels, data.datasets.humidity, '💧 Humidity (%)', '#22e5e5');
+      updateMonthlyChart('monthly-chart-wl', data.labels, data.datasets.water_level, '🪣 Water Level (%)', '#22d77a');
+      
+      // Update Table
+      updateMonthlyDataTable(data);
+      
+      // Show the section if hidden
+      const section = document.getElementById('monthly-analysis-section');
+      if (section) section.style.display = 'block';
+      
+    } catch (e) {
+      console.error('[MONTHLY] Error loading data:', e);
+      showToast('❌', 'Failed to load monthly data');
+    }
+  }
+
+  // ─── Update Monthly Chart ────────────────────────────────────
+  function updateMonthlyChart(canvasId, labels, values, title, color) {
+    const ctx = document.getElementById(canvasId);
+    if (!ctx) return;
+    
+    // Destroy existing chart if any
+    if (ctx._chart) {
+      ctx._chart.destroy();
+    }
+    
+    const filteredLabels = labels.filter((_, i) => i % Math.ceil(labels.length / 10) === 0 || i === labels.length - 1);
+    const filteredValues = values ? values.map((v, i) => (i % Math.ceil(labels.length / 10) === 0 || i === labels.length - 1) ? v : null).filter(v => v !== null) : [];
+    
+    ctx._chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: filteredLabels,
+        datasets: [{
+          label: title,
+          data: filteredValues,
+          borderColor: color,
+          backgroundColor: color + '20',
+          tension: 0.3,
+          fill: true,
+          pointRadius: 3,
+          pointBackgroundColor: color,
+          borderWidth: 2,
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            display: true,
+            labels: { color: 'rgba(232,240,254,0.8)', font: { size: 11 } }
+          }
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            ticks: { color: 'rgba(232,240,254,0.6)', font: { size: 10 } },
+            grid: { color: 'rgba(56,148,255,0.08)' }
+          },
+          x: {
+            ticks: { color: 'rgba(232,240,254,0.6)', font: { size: 10 } },
+            grid: { color: 'rgba(56,148,255,0.08)' }
+          }
+        }
+      }
+    });
+  }
+
+  // ─── Update Monthly Data Table ───────────────────────────────
+  function updateMonthlyDataTable(data) {
+    const tbody = document.getElementById('monthly-table-body');
+    if (!tbody) return;
+    
+    let html = '';
+    for (let i = 0; i < data.labels.length; i++) {
+      const label = data.labels[i];
+      const temp = data.datasets.air_temperature?.[i] ?? '—';
+      const hum = data.datasets.humidity?.[i] ?? '—';
+      const ph = data.datasets.ph?.[i] ?? '—';
+      const tds = data.datasets.tds?.[i] ?? '—';
+      const wl = data.datasets.water_level?.[i] ?? '—';
+      const sun = data.datasets.sunlight?.[i] ?? '—';
+      
+      const format = (v) => typeof v === 'number' ? v.toFixed(1) : v;
+      
+      html += `<tr style="border-bottom:1px solid rgba(56,148,255,0.08);">
+        <td style="text-align:left; padding:0.75rem; color:var(--text-secondary);">${label}</td>
+        <td style="text-align:center; padding:0.75rem; color:#ff8c42;">${format(temp)}</td>
+        <td style="text-align:center; padding:0.75rem; color:#22e5e5;">${format(hum)}</td>
+        <td style="text-align:center; padding:0.75rem; color:#a855f7;">${format(ph)}</td>
+        <td style="text-align:center; padding:0.75rem; color:#3b9dff;">${format(tds)}</td>
+        <td style="text-align:center; padding:0.75rem; color:#22d77a;">${format(wl)}</td>
+        <td style="text-align:center; padding:0.75rem; color:#f5c842;">${format(sun)}</td>
+      </tr>`;
+    }
+    tbody.innerHTML = html || '<tr><td colspan="7" style="text-align:center; padding:1rem; color:var(--text-muted);">No data available</td></tr>';
+  }
+
+
+    // ─── Create new custom plant ──────────────────────────────────
+  async function createNewPlant() {
+    const get    = id => document.getElementById(id)?.value?.trim();
+    const getNum = id => parseFloat(document.getElementById(id)?.value);
+
+    const key  = get('new-plant-key')?.toLowerCase().replace(/\s+/g, '_');
+    const name = get('new-plant-name');
+    if (!key || !name) { showToast('⚠️', 'Please enter plant name and key ID'); return; }
+
+    const payload = {
+      key,
+      display_name:    name,
+      emoji:           get('new-plant-emoji') || '🌱',
+      temperature_min: getNum('np-temp-min'), temperature_max: getNum('np-temp-max'),
+      humidity_min:    getNum('np-hum-min'),  humidity_max:    getNum('np-hum-max'),
+      ph_min:          getNum('np-ph-min'),   ph_max:          getNum('np-ph-max'),
+      tds_min:         getNum('np-tds-min'),  tds_max:         getNum('np-tds-max'),
+    };
+
+    try {
+      const res = await fetch(`${API_BASE}/add-plant`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(payload),
+      });
+      if (res.ok) {
+        await fetchAndRenderPlants();
+        showToast(payload.emoji, `${name} profile created!`);
+        // Clear form
+        ['new-plant-name','new-plant-key','new-plant-emoji',
+         'np-temp-min','np-temp-max','np-hum-min','np-hum-max',
+         'np-ph-min','np-ph-max','np-tds-min','np-tds-max'].forEach(id => {
+          const el = document.getElementById(id); if (el) el.value = '';
+        });
+      } else {
+        const err = await res.json();
+        showToast('❌', err.error || 'Failed to create plant');
+      }
+    } catch (e) {
+      showToast('❌', 'Network error while creating plant');
+    }
+  }
+
+  // ─── Fetch and display plant alerts ──────────────────────────
+  async function fetchPlantAlerts() {
+    try {
+      const res = await fetch(`${API_BASE}/plant-alerts`, { signal: AbortSignal.timeout(4000) });
+      if (!res.ok) return;
+      const data = await res.json();
+      const alerts = data.alerts || [];
+      const container = document.getElementById('plant-alerts-container');
+      const feed      = document.getElementById('plant-alerts-feed');
+      if (!feed) return;
+
+      if (alerts.length === 0) {
+        if (container) container.style.display = 'none';
+        return;
+      }
+
+      if (container) container.style.display = 'block';
+      feed.innerHTML = alerts.slice(0, 5).map(a =>
+        `<div class="plant-alert-item">
+          <span style="flex-shrink:0;">${a.icon || '⚠️'}</span>
+          <span>${a.message}</span>
+          <span style="margin-left:auto; font-size:0.68rem; color:var(--text-muted); white-space:nowrap;">
+            ${new Date(a.time).toLocaleTimeString()}
+          </span>
+        </div>`
+      ).join('');
+    } catch (_) {}
+  }
+
+  // ─── Hook into fetchSensorData to color cards ────────────────
+</script>
+
+<!-- Premium Parallax Effects -->
+<script>
+  document.addEventListener("mousemove", (e) => {
+    const x = (e.clientX / window.innerWidth - 0.5) * 5;
+    const y = (e.clientY / window.innerHeight - 0.5) * 5;
+    document.querySelectorAll(".card").forEach(el => {
+      el.style.transform = `perspective(1000px) rotateY(${x}deg) rotateX(${-y}deg)`;
+    });
+  });
+</script>
+</body>
+</html>

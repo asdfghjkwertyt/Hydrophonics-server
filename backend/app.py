@@ -35,13 +35,12 @@ load_dotenv(override=True)
 # ─── Configuration ────────────────────────────────────────────────
 GEMINI_API_KEY  = os.getenv("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY_HERE")
 GEMINI_MODEL_ID = "gemini-2.0-flash"
-BASE_DIR        = Path(__file__).resolve().parent
-UPLOAD_DIR      = BASE_DIR / "uploads"
-FRONTEND_DIR    = BASE_DIR.parent / "frontend"
+UPLOAD_DIR      = Path("uploads")
+FRONTEND_DIR    = Path("../frontend")
 MAX_IMAGE_SIZE  = 5 * 1024 * 1024   # 5 MB guard
-PLANTS_FILE     = BASE_DIR / "plants.json"
-SETTINGS_FILE   = BASE_DIR / "settings.json"
-DB_FILE         = BASE_DIR / "sensor_history.db"
+PLANTS_FILE     = Path("plants.json")
+SETTINGS_FILE   = Path("settings.json")
+DB_FILE         = Path("sensor_history.db")
 DB_RETENTION_DAYS = 90   # Prune readings older than this
 
 # ─── Logging ──────────────────────────────────────────────────────
@@ -289,29 +288,31 @@ def init_db():
 def insert_reading(sensor: dict, ts: str):
     """Insert one sensor snapshot into the persistent database."""
     try:
-        with sqlite3.connect(str(DB_FILE)) as conn:
-            conn.execute("""
-                INSERT INTO sensor_readings
-                    (timestamp, air_temperature, humidity, water_temperature,
-                     ph, tds, water_level, sunlight,
-                     pump, light, mist, shed)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-            """, (
-                ts,
-                sensor.get("air_temperature"),
-                sensor.get("humidity"),
-                sensor.get("water_temperature"),
-                sensor.get("ph"),
-                sensor.get("tds"),
-                sensor.get("water_level"),
-                sensor.get("sunlight"),
-                int(bool(sensor.get("pump"))),
-                int(bool(sensor.get("light"))),
-                int(bool(sensor.get("mist"))),
-                int(bool(sensor.get("shed"))),
-            ))
+        conn = sqlite3.connect(str(DB_FILE))
+        conn.execute("""
+            INSERT INTO sensor_readings
+                (timestamp, air_temperature, humidity, water_temperature,
+                 ph, tds, water_level, sunlight,
+                 pump, light, mist, shed)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+        """, (
+            ts,
+            sensor.get("air_temperature"),
+            sensor.get("humidity"),
+            sensor.get("water_temperature"),
+            sensor.get("ph"),
+            sensor.get("tds"),
+            sensor.get("water_level"),
+            sensor.get("sunlight"),
+            int(bool(sensor.get("pump"))),
+            int(bool(sensor.get("light"))),
+            int(bool(sensor.get("mist"))),
+            int(bool(sensor.get("shed"))),
+        ))
+        conn.commit()
+        conn.close()
     except Exception as e:
-        log.exception(f"[DB] Insert failed for timestamp {ts}: {e}")
+        log.warning(f"[DB] Insert failed: {e}")
 
 
 def prune_old_readings():

@@ -16,7 +16,8 @@ import json
 import base64
 import logging
 import datetime
-import sqlite3
+import psycopg2
+import psycopg2.extras
 import threading
 from pathlib import Path
 from threading import Lock
@@ -40,10 +41,8 @@ GEMINI_MODEL_ID = "gemini-2.0-flash"
 UPLOAD_DIR      = BASE_DIR / "uploads"
 FRONTEND_DIR    = PROJECT_DIR / "frontend"
 MAX_IMAGE_SIZE  = 5 * 1024 * 1024   # 5 MB guard
-PLANTS_FILE     = BASE_DIR / "plants.json"
-SETTINGS_FILE   = BASE_DIR / "settings.json"
-DB_FILE         = BASE_DIR / "sensor_history.db"
-DB_RETENTION_DAYS = 90   # Prune readings older than this
+DATABASE_URL    = os.getenv("DATABASE_URL", "")  # Supabase connection string
+DB_RETENTION_DAYS = 90   # Prune sensor readings older than this
 
 # ─── Logging ──────────────────────────────────────────────────────
 logging.basicConfig(
@@ -124,26 +123,87 @@ DEFAULT_PLANTS = {
     },
 }
 
-# ─── Load custom plants from file (persists across restarts) ──────
-def load_plants_from_file() -> dict:
-    if PLANTS_FILE.exists():
-        try:
-            with open(PLANTS_FILE, "r") as f:
-                custom = json.load(f)
-            log.info(f"[PLANTS] Loaded {len(custom)} custom plants from {PLANTS_FILE}")
-            return custom
-        except Exception as e:
-            log.warning(f"[PLANTS] Failed to load plant file: {e}")
-    return {}
+# ─── Supabase / PostgreSQL helpers ──────────────────────────────────────
+def _get_conn():
+    """Open a new psycopg2 connection to Supabase."""
+    url = DATABASE_URL
+    if not url:
+        raise RuntimeError("DATABASE_URL env var is not set")
+    if "sslmode" not in url:
+        url += "?sslmode=require"
+    conn = psycopg2.connect(url, cursor_factory=psycopg2.extras.RealDictCursor)
+    conn.autocommit = False
+    return conn
 
-def save_plants_to_file(custom_plants: dict):
+def _kv_get(key: str, default=None):
     try:
-        with open(PLANTS_FILE, "w") as f:
-            json.dump(custom_plants, f, indent=2)
+        conn = _get_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT value FROM kv_store WHERE key=%s", (key,))
+        row = cur.fetchone()
+        conn.close()
+        return json.loads(row["value"]) if row else default
     except Exception as e:
-        log.warning(f"[PLANTS] Failed to save plant file: {e}")
+        log.warning(f"[KV] get({key}) failed: {e}")
+        return default
 
-# ─── Dashboard settings (active plant + UI prefs, persists across restarts) ────
+def _kv_set(key: str, value):
+    try:
+        conn = _get_conn()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO kv_store(key,value) VALUES(%s,%s) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value",
+            (key, json.dumps(value))
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        log.warning(f"[KV] set({key}) failed: {e}")
+
+def load_plants_from_db() -> dict:
+    try:
+        conn = _get_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT plant_key, data FROM custom_plants")
+        rows = cur.fetchall()
+        conn.close()
+        result = {}
+        for row in rows:
+            try:
+                result[row["plant_key"]] = json.loads(row["data"])
+            except Exception:
+                pass
+        if result:
+            log.info(f"[PLANTS] Loaded {len(result)} custom plant(s) from Supabase")
+        return result
+    except Exception as e:
+        log.warning(f"[PLANTS] DB load failed: {e}")
+        return {}
+
+def save_plant_to_db(key: str, plant: dict):
+    try:
+        conn = _get_conn()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO custom_plants(plant_key,data) VALUES(%s,%s) ON CONFLICT(plant_key) DO UPDATE SET data=EXCLUDED.data",
+            (key, json.dumps(plant))
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        log.warning(f"[PLANTS] save({key}) failed: {e}")
+
+def delete_plant_from_db(key: str):
+    try:
+        conn = _get_conn()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM custom_plants WHERE plant_key=%s", (key,))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        log.warning(f"[PLANTS] delete({key}) failed: {e}")
+
+# ─── Dashboard settings (stored in Supabase kv_store) ──────────────────────
 DEFAULT_SETTINGS = {
     "current_plant": "lettuce",
     "active_chart_tab": "env",
@@ -153,48 +213,39 @@ DEFAULT_SETTINGS = {
 }
 
 def load_settings() -> dict:
-    if SETTINGS_FILE.exists():
-        try:
-            with open(SETTINGS_FILE, "r") as f:
-                saved = json.load(f)
-            # Merge with defaults so new keys always exist
-            merged = {**DEFAULT_SETTINGS, **saved}
-            log.info(f"[SETTINGS] Loaded settings — active plant: {merged.get('current_plant')}, auto_mode: {merged.get('auto_mode')}")
-            return merged
-        except Exception as e:
-            log.warning(f"[SETTINGS] Failed to load settings file: {e}")
-    return dict(DEFAULT_SETTINGS)
+    try:
+        saved = _kv_get("dashboard_settings", {})
+        merged = {**DEFAULT_SETTINGS, **saved}
+        log.info(f"[SETTINGS] Loaded from Supabase — plant: {merged.get('current_plant')}, auto_mode: {merged.get('auto_mode')}")
+        return merged
+    except Exception as e:
+        log.warning(f"[SETTINGS] load failed: {e}")
+        return dict(DEFAULT_SETTINGS)
 
 def save_settings(settings: dict):
     try:
-        with open(SETTINGS_FILE, "w") as f:
-            json.dump(settings, f, indent=2)
-        log.info(f"[SETTINGS] Saved — active plant: {settings.get('current_plant')}, auto_mode: {settings.get('auto_mode')}")
+        _kv_set("dashboard_settings", settings)
+        log.info(f"[SETTINGS] Saved to Supabase — plant: {settings.get('current_plant')}, auto_mode: {settings.get('auto_mode')}")
     except Exception as e:
-        log.warning(f"[SETTINGS] Failed to save settings file: {e}")
+        log.warning(f"[SETTINGS] save failed: {e}")
 
 def _int_or_default(value, default):
     try:
-        if value is None or value == "":
-            return default
+        if value is None or value == "": return default
         return int(value)
-    except (TypeError, ValueError):
-        return default
+    except (TypeError, ValueError): return default
 
 def _float_or_default(value, default):
     try:
-        if value is None or value == "":
-            return default
+        if value is None or value == "": return default
         return float(value)
-    except (TypeError, ValueError):
-        return default
+    except (TypeError, ValueError): return default
 
-# Load persisted settings
+# Load persisted state from Supabase
 _saved_settings = load_settings()
 dashboard_settings: dict = _saved_settings
 
-# Merge defaults + any saved custom plants
-_custom_plants = load_plants_from_file()
+_custom_plants = load_plants_from_db()
 plant_db: dict = {**DEFAULT_PLANTS, **_custom_plants}
 
 # ─── Shared In-Memory State ───────────────────────────────────────
@@ -224,7 +275,12 @@ latest_sensor_data: dict = {
     "light_reason":      "Waiting for ESP32…",
     "mist_reason":       "Waiting for ESP32…",
     "shed_reason":       "Waiting for ESP32…",
-    # Thresholds reported by ESP32
+    # Autonomous reason strings
+    "pump_reason":       "Waiting for ESP32…",
+    "light_reason":      "Waiting for ESP32…",
+    "mist_reason":       "Waiting for ESP32…",
+    "shed_reason":       "Waiting for ESP32…",
+    # Thresholds
     "shed_close_threshold": 70,
     "light_on_threshold":   40,
     "humidity_min":         45,
@@ -238,7 +294,7 @@ latest_ai_result: dict = {
     "recommendation":  "Waiting for first plant image…",
     "raw_response":    "",
     "analysis_time":   None,
-    "status":          "pending",   # pending | healthy | diseased | error
+    "status":          "pending",
 }
 
 pending_commands: dict = {
@@ -248,22 +304,19 @@ pending_commands: dict = {
     "shed":  None,
 }
 
-# ─── Sensor History Buffer (in-memory, rolling) ──────────────────
+# ─── Sensor History Buffer (in-memory, rolling) ─────────────────────
 from collections import deque
 
-HISTORY_MAX = 180   # keep last 180 readings (6 min at 2 s intervals)
-
-sensor_history: deque = deque(maxlen=HISTORY_MAX)  # each entry = snapshot dict
-
-# ─── SQLite Persistent Database ──────────────────────────────────
-
+HISTORY_MAX = 180
+sensor_history: deque = deque(maxlen=HISTORY_MAX)
 def init_db():
-    """Create the sensor_readings and tank_config tables if they do not already exist."""
-    conn = sqlite3.connect(str(DB_FILE))
+    """Create all tables in Supabase if they don't already exist."""
+    conn = _get_conn()
     try:
-        conn.execute("""
+        cur = conn.cursor()
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS sensor_readings (
-                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                id                SERIAL PRIMARY KEY,
                 timestamp         TEXT    NOT NULL,
                 air_temperature   REAL,
                 humidity          REAL,
@@ -276,49 +329,59 @@ def init_db():
                 light             INTEGER,
                 mist              INTEGER,
                 shed              INTEGER
-            )
+            );
         """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON sensor_readings(timestamp)")
-        
-        conn.execute("""
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON sensor_readings(timestamp);")
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS tank_config (
-                id                INTEGER PRIMARY KEY,
-                tank_height_cm    REAL NOT NULL DEFAULT 30,
-                tank_width_cm     REAL NOT NULL DEFAULT 30,
-                tank_length_cm    REAL NOT NULL DEFAULT 30,
-                sensor_offset_cm  REAL NOT NULL DEFAULT 0,
-                updated_at        TEXT NOT NULL
-            )
+                id               INTEGER PRIMARY KEY,
+                tank_height_cm   REAL NOT NULL DEFAULT 30,
+                tank_width_cm    REAL NOT NULL DEFAULT 30,
+                tank_length_cm   REAL NOT NULL DEFAULT 30,
+                sensor_offset_cm REAL NOT NULL DEFAULT 0,
+                updated_at       TEXT NOT NULL
+            );
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS kv_store (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS custom_plants (
+                plant_key TEXT PRIMARY KEY,
+                data      TEXT NOT NULL
+            );
         """)
         conn.commit()
-        
-        # Initialize default config if not exists
-        check = conn.execute("SELECT COUNT(*) FROM tank_config").fetchone()[0]
-        if check == 0:
-            from datetime import datetime
-            now = datetime.utcnow().isoformat() + "Z"
-            conn.execute("""
-                INSERT INTO tank_config
-                (tank_height_cm, tank_width_cm, tank_length_cm, sensor_offset_cm, updated_at)
-                VALUES (?, ?, ?, ?, ?)
-            """, (30, 30, 30, 0, now))
+        # Seed tank_config row if absent
+        cur.execute("SELECT COUNT(*) AS cnt FROM tank_config WHERE id=1")
+        if cur.fetchone()["cnt"] == 0:
+            now = datetime.datetime.utcnow().isoformat() + "Z"
+            cur.execute(
+                "INSERT INTO tank_config (id, tank_height_cm, tank_width_cm, tank_length_cm, sensor_offset_cm, updated_at) VALUES (1,%s,%s,%s,%s,%s)",
+                (30, 30, 30, 0, now)
+            )
             conn.commit()
-        
-        log.info(f"[DB] SQLite database ready at {DB_FILE.resolve()}")
+        log.info("[DB] Supabase PostgreSQL tables ready")
+    except Exception as e:
+        conn.rollback()
+        log.error(f"[DB] init_db failed: {e}")
     finally:
         conn.close()
 
 
 def insert_reading(sensor: dict, ts: str):
-    """Insert one sensor snapshot into the persistent database."""
+    """Insert one sensor snapshot into Supabase sensor_readings."""
     try:
-        conn = sqlite3.connect(str(DB_FILE))
-        conn.execute("""
+        conn = _get_conn()
+        cur = conn.cursor()
+        cur.execute("""
             INSERT INTO sensor_readings
                 (timestamp, air_temperature, humidity, water_temperature,
-                 ph, tds, water_level, sunlight,
-                 pump, light, mist, shed)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                 ph, tds, water_level, sunlight, pump, light, mist, shed)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         """, (
             ts,
             sensor.get("air_temperature"),
@@ -340,13 +403,14 @@ def insert_reading(sensor: dict, ts: str):
 
 
 def prune_old_readings():
-    """Delete readings older than DB_RETENTION_DAYS.  Called by background thread."""
+    """Delete readings older than DB_RETENTION_DAYS."""
     cutoff = (datetime.datetime.utcnow() - datetime.timedelta(days=DB_RETENTION_DAYS)).isoformat() + "Z"
     try:
-        conn = sqlite3.connect(str(DB_FILE))
-        cur = conn.execute("DELETE FROM sensor_readings WHERE timestamp < ?", (cutoff,))
-        conn.commit()
+        conn = _get_conn()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM sensor_readings WHERE timestamp < %s", (cutoff,))
         deleted = cur.rowcount
+        conn.commit()
         conn.close()
         if deleted:
             log.info(f"[DB] Pruned {deleted} readings older than {DB_RETENTION_DAYS} days")
@@ -357,14 +421,14 @@ def prune_old_readings():
 def _prune_loop():
     """Background thread: prune DB once per day."""
     while True:
-        threading.Event().wait(86400)   # sleep 24 h
+        threading.Event().wait(86400)
         prune_old_readings()
 
 
-# Initialise DB on startup
+# Initialise Supabase tables on startup
 init_db()
 
-# Start background pruning thread (daemon so it exits when server exits)
+# Start background pruning thread
 _pruner = threading.Thread(target=_prune_loop, daemon=True, name="db-pruner")
 _pruner.start()
 
@@ -700,9 +764,7 @@ def add_plant():
 
         with state_lock:
             plant_db[key] = plant_entry
-            # Persist only custom plants (don't overwrite defaults file)
-            custom_only = {k: v for k, v in plant_db.items() if k not in DEFAULT_PLANTS}
-            save_plants_to_file(custom_only)
+            save_plant_to_db(key, plant_entry)
 
         log.info(f"[PLANT] Added/updated custom plant: {key}")
         return jsonify({"status": "ok", "key": key, "plant": plant_entry}), 200
@@ -756,9 +818,7 @@ def update_plant():
             for field in editable_str:
                 if field in data: plant_db[key][field] = str(data[field])
 
-            # Persist all non-default entries + any modified defaults
-            custom_only = {k: v for k, v in plant_db.items() if k not in DEFAULT_PLANTS or plant_db[k] != DEFAULT_PLANTS.get(k)}
-            save_plants_to_file(custom_only)
+            save_plant_to_db(key, dict(plant_db[key]))
             updated = dict(plant_db[key])
 
         log.info(f"[PLANT] Updated conditions for: {key}")
@@ -790,8 +850,7 @@ def delete_plant():
             del plant_db[key]
             if current_plant_key == key:
                 current_plant_key = "lettuce"
-            custom_only = {k: v for k, v in plant_db.items() if k not in DEFAULT_PLANTS}
-            save_plants_to_file(custom_only)
+            delete_plant_from_db(key)
 
         log.info(f"[PLANT] Deleted custom plant: {key}")
         return jsonify({"status": "ok", "deleted": key}), 200
@@ -815,19 +874,14 @@ def get_plant_alerts():
 def get_tank_config():
     """Get current tank configuration (dimensions and sensor offset)."""
     try:
-        conn = sqlite3.connect(str(DB_FILE))
-        conn.row_factory = sqlite3.Row
-        cfg = conn.execute("SELECT * FROM tank_config WHERE id=1").fetchone()
+        conn = _get_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM tank_config WHERE id=1")
+        cfg = cur.fetchone()
         conn.close()
-        
         if not cfg:
-            return jsonify({
-                "tank_height_cm": 30,
-                "tank_width_cm": 30,
-                "tank_length_cm": 30,
-                "sensor_offset_cm": 0,
-            }), 200
-        
+            return jsonify({"tank_height_cm": 30, "tank_width_cm": 30,
+                            "tank_length_cm": 30, "sensor_offset_cm": 0}), 200
         return jsonify({
             "tank_height_cm": cfg["tank_height_cm"],
             "tank_width_cm": cfg["tank_width_cm"],
@@ -847,28 +901,24 @@ def set_tank_config():
         data = request.get_json(force=True, silent=True)
         if not data:
             return jsonify({"error": "Invalid JSON"}), 400
-        
         height = float(data.get("tank_height_cm", 30))
-        width = float(data.get("tank_width_cm", 30))
+        width  = float(data.get("tank_width_cm", 30))
         length = float(data.get("tank_length_cm", 30))
         offset = float(data.get("sensor_offset_cm", 0))
-        
         if height <= 0 or width <= 0 or length <= 0:
             return jsonify({"error": "Tank dimensions must be positive"}), 400
-        
-        conn = sqlite3.connect(str(DB_FILE))
         now = datetime.datetime.utcnow().isoformat() + "Z"
-        conn.execute("""
-            UPDATE tank_config
-            SET tank_height_cm=?, tank_width_cm=?, tank_length_cm=?, sensor_offset_cm=?, updated_at=?
-            WHERE id=1
-        """, (height, width, length, offset, now))
+        conn = _get_conn()
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE tank_config SET tank_height_cm=%s, tank_width_cm=%s, tank_length_cm=%s, sensor_offset_cm=%s, updated_at=%s WHERE id=1",
+            (height, width, length, offset, now)
+        )
         conn.commit()
         conn.close()
-        
         log.info(f"[TANK] Config updated: {height}×{width}×{length}cm, offset={offset}cm")
-        return jsonify({"status": "ok", "tank_height_cm": height, "tank_width_cm": width, 
-                       "tank_length_cm": length, "sensor_offset_cm": offset}), 200
+        return jsonify({"status": "ok", "tank_height_cm": height, "tank_width_cm": width,
+                        "tank_length_cm": length, "sensor_offset_cm": offset}), 200
     except Exception as e:
         log.error(f"[TANK] set_tank_config error: {e}")
         return jsonify({"error": str(e)}), 500
@@ -876,41 +926,24 @@ def set_tank_config():
 
 @app.route("/water-level-liters", methods=["GET"])
 def get_water_level_liters():
-    """
-    Calculate water level in liters based on current sensor reading and tank config.
-    Returns: {water_level_cm: float, water_volume_liters: float, tank_capacity_liters: float}
-    """
+    """Calculate water level in liters based on current sensor reading and tank config."""
     try:
-        conn = sqlite3.connect(str(DB_FILE))
-        conn.row_factory = sqlite3.Row
-        
-        # Get latest water level sensor reading
-        latest = conn.execute("""
-            SELECT water_level FROM sensor_readings
-            ORDER BY timestamp DESC LIMIT 1
-        """).fetchone()
-        
-        # Get tank config
-        cfg = conn.execute("SELECT * FROM tank_config WHERE id=1").fetchone()
+        conn = _get_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT water_level FROM sensor_readings ORDER BY timestamp DESC LIMIT 1")
+        latest = cur.fetchone()
+        cur.execute("SELECT * FROM tank_config WHERE id=1")
+        cfg = cur.fetchone()
         conn.close()
-        
         water_level_raw = latest["water_level"] if latest else 0
-        
         height = cfg["tank_height_cm"] if cfg else 30
-        width = cfg["tank_width_cm"] if cfg else 30
+        width  = cfg["tank_width_cm"]  if cfg else 30
         length = cfg["tank_length_cm"] if cfg else 30
         offset = cfg["sensor_offset_cm"] if cfg else 0
-        
-        # Calculate actual water level height (in cm)
-        # water_level_raw is typically 0-100 representing percentage of height
-        # Apply sensor offset (sensor dead zone) then convert to height
         water_level_cm = ((water_level_raw / 100) * height) - offset
-        water_level_cm = max(0, min(water_level_cm, height))  # Clamp to valid range
-        
-        # Calculate volume: V = width × length × height (in cm³), convert to liters (÷1000)
+        water_level_cm = max(0, min(water_level_cm, height))
         tank_capacity_liters = (width * length * height) / 1000
-        water_volume_liters = (width * length * water_level_cm) / 1000
-        
+        water_volume_liters  = (width * length * water_level_cm) / 1000
         return jsonify({
             "water_level_cm": round(water_level_cm, 2),
             "water_volume_liters": round(water_volume_liters, 2),
@@ -1155,20 +1188,20 @@ def get_monthly_data():
     cutoff_str = cutoff_utc.isoformat() + "Z"
 
     try:
-        conn = sqlite3.connect(str(DB_FILE))
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute("""
+        conn = _get_conn()
+        cur = conn.cursor()
+        cur.execute("""
             SELECT
                 timestamp,
                 air_temperature, humidity, water_temperature,
                 ph, tds, water_level, sunlight
             FROM sensor_readings
-            WHERE timestamp >= ?
+            WHERE timestamp >= %s
             ORDER BY timestamp ASC
-        """, (cutoff_str,)).fetchall()
-        total_readings = conn.execute(
-            "SELECT COUNT(*) FROM sensor_readings WHERE timestamp >= ?", (cutoff_str,)
-        ).fetchone()[0]
+        """, (cutoff_str,))
+        rows = cur.fetchall()
+        cur.execute("SELECT COUNT(*) AS cnt FROM sensor_readings WHERE timestamp >= %s", (cutoff_str,))
+        total_readings = cur.fetchone()["cnt"]
         conn.close()
     except Exception as e:
         log.error(f"[MONTHLY] DB query failed: {e}")

@@ -73,6 +73,7 @@ DEFAULT_PLANTS = {
         "humidity_min": 50,    "humidity_max": 70,
         "ph_min": 5.5,         "ph_max": 6.5,
         "tds_min": 500,        "tds_max": 800,
+        "shed_closed_angle": 10, "shed_open_angle": 170,
     },
     "tomato": {
         "display_name": "Tomato",
@@ -81,6 +82,7 @@ DEFAULT_PLANTS = {
         "humidity_min": 60,    "humidity_max": 80,
         "ph_min": 5.8,         "ph_max": 6.8,
         "tds_min": 700,        "tds_max": 1000,
+        "shed_closed_angle": 10, "shed_open_angle": 170,
     },
     "basil": {
         "display_name": "Basil",
@@ -89,6 +91,7 @@ DEFAULT_PLANTS = {
         "humidity_min": 55,    "humidity_max": 75,
         "ph_min": 5.5,         "ph_max": 6.5,
         "tds_min": 700,        "tds_max": 1120,
+        "shed_closed_angle": 10, "shed_open_angle": 170,
     },
     "spinach": {
         "display_name": "Spinach",
@@ -97,6 +100,7 @@ DEFAULT_PLANTS = {
         "humidity_min": 50,    "humidity_max": 70,
         "ph_min": 6.0,         "ph_max": 7.0,
         "tds_min": 1260,       "tds_max": 1610,
+        "shed_closed_angle": 10, "shed_open_angle": 170,
     },
     "strawberry": {
         "display_name": "Strawberry",
@@ -105,6 +109,7 @@ DEFAULT_PLANTS = {
         "humidity_min": 60,    "humidity_max": 80,
         "ph_min": 5.5,         "ph_max": 6.5,
         "tds_min": 1260,       "tds_max": 1540,
+        "shed_closed_angle": 10, "shed_open_angle": 170,
     },
     "mint": {
         "display_name": "Mint",
@@ -113,6 +118,7 @@ DEFAULT_PLANTS = {
         "humidity_min": 55,    "humidity_max": 70,
         "ph_min": 5.5,         "ph_max": 6.0,
         "tds_min": 1400,       "tds_max": 1680,
+        "shed_closed_angle": 10, "shed_open_angle": 170,
     },
 }
 
@@ -670,6 +676,8 @@ def add_plant():
             "light_off_threshold":  int(data.get("light_off_threshold", 55)),
             "shed_close_threshold": int(data.get("shed_close_threshold",70)),
             "shed_open_threshold":  int(data.get("shed_open_threshold", 50)),
+            "shed_closed_angle":    int(data.get("shed_closed_angle", 10)),
+            "shed_open_angle":      int(data.get("shed_open_angle", 170)),
         }
 
         with state_lock:
@@ -718,6 +726,7 @@ def update_plant():
                 "water_level_warn","water_level_crit",
                 "light_on_threshold","light_off_threshold",
                 "shed_close_threshold","shed_open_threshold",
+                "shed_closed_angle","shed_open_angle",
             ]
             editable_str = ["display_name", "emoji"]
             for field in editable_float:

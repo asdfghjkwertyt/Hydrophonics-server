@@ -171,6 +171,22 @@ def save_settings(settings: dict):
     except Exception as e:
         log.warning(f"[SETTINGS] Failed to save settings file: {e}")
 
+def _int_or_default(value, default):
+    try:
+        if value is None or value == "":
+            return default
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+def _float_or_default(value, default):
+    try:
+        if value is None or value == "":
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
 # Load persisted settings
 _saved_settings = load_settings()
 dashboard_settings: dict = _saved_settings
@@ -670,14 +686,14 @@ def add_plant():
             # Optional extended thresholds (use sensible defaults if not provided)
             "water_temp_min":       float(data.get("water_temp_min", 18)),
             "water_temp_max":       float(data.get("water_temp_max", 26)),
-            "water_level_warn":     int(data.get("water_level_warn",  50)),
-            "water_level_crit":     int(data.get("water_level_crit",  25)),
-            "light_on_threshold":   int(data.get("light_on_threshold",  40)),
-            "light_off_threshold":  int(data.get("light_off_threshold", 55)),
-            "shed_close_threshold": int(data.get("shed_close_threshold",70)),
-            "shed_open_threshold":  int(data.get("shed_open_threshold", 50)),
-            "shed_closed_angle":    int(data.get("shed_closed_angle", 10)),
-            "shed_open_angle":      int(data.get("shed_open_angle", 170)),
+            "water_level_warn":     _int_or_default(data.get("water_level_warn"), 50),
+            "water_level_crit":     _int_or_default(data.get("water_level_crit"), 25),
+            "light_on_threshold":   _int_or_default(data.get("light_on_threshold"), 40),
+            "light_off_threshold":  _int_or_default(data.get("light_off_threshold"), 55),
+            "shed_close_threshold": _int_or_default(data.get("shed_close_threshold"), 70),
+            "shed_open_threshold":  _int_or_default(data.get("shed_open_threshold"), 50),
+            "shed_closed_angle":    _int_or_default(data.get("shed_closed_angle"), 10),
+            "shed_open_angle":      _int_or_default(data.get("shed_open_angle"), 170),
         }
 
         with state_lock:
@@ -730,9 +746,11 @@ def update_plant():
             ]
             editable_str = ["display_name", "emoji"]
             for field in editable_float:
-                if field in data: plant_db[key][field] = float(data[field])
+                if field in data:
+                    plant_db[key][field] = _float_or_default(data[field], plant_db[key][field])
             for field in editable_int:
-                if field in data: plant_db[key][field] = int(data[field])
+                if field in data:
+                    plant_db[key][field] = _int_or_default(data[field], plant_db[key].get(field, 0))
             for field in editable_str:
                 if field in data: plant_db[key][field] = str(data[field])
 

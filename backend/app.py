@@ -1070,17 +1070,31 @@ def receive_sensor_data():
 
         ts = datetime.datetime.utcnow().isoformat() + "Z"
         with state_lock:
-            # Update only fields that are present in the payload
+            # Update sensor readings — but in manual mode, DON'T overwrite actuator states
+            # (the ESP32 reports what IT is doing, but dashboard shows what WE commanded)
+            actuator_keys = {"pump", "light", "mist", "shed"}
+            is_auto = dashboard_settings.get("auto_mode", True)
             for key in latest_sensor_data:
                 if key in data:
+                    # In manual mode, skip actuator state updates from ESP32 payload
+                    # so manual commands shown on dashboard don't flicker back
+                    if not is_auto and key in actuator_keys:
+                        continue
                     latest_sensor_data[key] = data[key]
             latest_sensor_data["timestamp"] = ts
 
             # ── Apply autonomous decisions if auto mode is enabled ────
-            if dashboard_settings.get("auto_mode", True):
+            auto = dashboard_settings.get("auto_mode", True)
+            if auto:
                 key   = current_plant_key
                 plant = plant_db.get(key, {})
                 apply_autonomous_decisions(latest_sensor_data, plant)
+            else:
+                # Manual mode: keep existing actuator states, only update reasons
+                for act in ("pump", "light", "mist", "shed"):
+                    reason = latest_sensor_data.get(f"{act}_reason", "")
+                    if "Auto" in reason or "Autonomous" in reason or reason == "Waiting for ESP32…":
+                        latest_sensor_data[f"{act}_reason"] = "Manual mode active"
 
             # ── Append to rolling in-memory history ──────────────
             snapshot = {
@@ -1588,6 +1602,13 @@ def set_control():
         if not updated:
             log.warning(f"[CONTROL] POST: No valid commands in {list(data.keys())}")
             return jsonify({"error": "No valid commands found"}), 400
+
+        # ── Switch to manual mode automatically when a command is sent ──
+        with state_lock:
+            if dashboard_settings.get("auto_mode", True):
+                dashboard_settings["auto_mode"] = False
+                save_settings(dashboard_settings)
+                log.info("[CONTROL] Auto-switched to Manual mode due to manual command")
 
         # ── Emit control command to ESP32 and Dashboard via WebSocket ──
         socketio.emit('control_event', updated, namespace='/')

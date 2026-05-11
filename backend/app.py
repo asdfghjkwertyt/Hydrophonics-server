@@ -894,6 +894,107 @@ def get_water_level_liters():
 
 
 # ─────────────────────────────────────────────────────────────────
+#  AUTO-MODE DECISION LOGIC
+#  Calculate actuator states and reasons based on sensor readings
+# ─────────────────────────────────────────────────────────────────
+def calculate_autonomous_decisions(sensor_data: dict, plant: dict) -> dict:
+    """
+    Calculate autonomous control decisions based on sensor data and plant thresholds.
+    Returns dict with actuator states and reasons.
+    
+    Rules:
+    - Pump: Always ON (continuous circulation)
+    - Light: ON if sunlight < light_on_threshold, OFF if >= light_off_threshold
+    - Mist: ON if humidity < humidity_min, OFF if >= humidity_max
+    - Shed: CLOSED (0) if sunlight > shed_close_threshold, OPEN (1) if < shed_open_threshold
+    """
+    decisions = {}
+    
+    # ── Pump (always on) ────────────────────────────────────────
+    decisions["pump"] = {
+        "state": True,
+        "reason": "Continuous — always on"
+    }
+    
+    # ── Light (based on sunlight) ───────────────────────────────
+    sunlight = sensor_data.get("sunlight", 0)
+    light_on_threshold = plant.get("light_on_threshold", 40)
+    light_off_threshold = plant.get("light_off_threshold", 55)
+    
+    if sunlight < light_on_threshold:
+        light_state = True
+        light_reason = f"Low sunlight ({sunlight:.0f}%) — lights ON"
+    elif sunlight >= light_off_threshold:
+        light_state = False
+        light_reason = f"Sufficient sunlight ({sunlight:.0f}%) — lights OFF"
+    else:
+        # Hysteresis zone: maintain current state
+        light_state = sensor_data.get("light", False)
+        light_reason = f"Sunlight {sunlight:.0f}% — holding state"
+    
+    decisions["light"] = {
+        "state": light_state,
+        "reason": light_reason
+    }
+    
+    # ── Mist (based on humidity) ────────────────────────────────
+    humidity = sensor_data.get("humidity", 0)
+    humidity_min = plant.get("humidity_min", 45)
+    humidity_max = plant.get("humidity_max", 65)
+    
+    if humidity < humidity_min:
+        mist_state = True
+        mist_reason = f"Low humidity ({humidity:.0f}%) — mist ON"
+    elif humidity >= humidity_max:
+        mist_state = False
+        mist_reason = f"Humidity adequate ({humidity:.0f}%) — mist OFF"
+    else:
+        # Hysteresis zone: maintain current state
+        mist_state = sensor_data.get("mist", False)
+        mist_reason = f"Humidity {humidity:.0f}% — holding state"
+    
+    decisions["mist"] = {
+        "state": mist_state,
+        "reason": mist_reason
+    }
+    
+    # ── Shed (based on sunlight) ────────────────────────────────
+    shed_close_threshold = plant.get("shed_close_threshold", 70)
+    shed_open_threshold = plant.get("shed_open_threshold", 50)
+    
+    if sunlight > shed_close_threshold:
+        shed_state = False  # Closed (0)
+        shed_reason = f"Intense sunlight ({sunlight:.0f}%) — shade CLOSED"
+    elif sunlight < shed_open_threshold:
+        shed_state = True  # Open (1)
+        shed_reason = f"Low sunlight ({sunlight:.0f}%) — shade OPEN"
+    else:
+        # Hysteresis zone: maintain current state
+        shed_state = sensor_data.get("shed", True)
+        shed_reason = f"Sunlight {sunlight:.0f}% — holding state"
+    
+    decisions["shed"] = {
+        "state": shed_state,
+        "reason": shed_reason
+    }
+    
+    return decisions
+
+
+def apply_autonomous_decisions(sensor_data: dict, plant: dict):
+    """
+    Calculate autonomous decisions and update sensor_data with states and reasons.
+    Called whenever sensor data is received in auto mode.
+    """
+    decisions = calculate_autonomous_decisions(sensor_data, plant)
+    
+    for actuator in ["pump", "light", "mist", "shed"]:
+        if actuator in decisions:
+            sensor_data[actuator] = decisions[actuator]["state"]
+            sensor_data[f"{actuator}_reason"] = decisions[actuator]["reason"]
+
+
+# ─────────────────────────────────────────────────────────────────
 #  ROUTES – Sensor Data
 # ─────────────────────────────────────────────────────────────────
 @app.route("/sensor-data", methods=["POST"])
@@ -912,6 +1013,12 @@ def receive_sensor_data():
                 if key in data:
                     latest_sensor_data[key] = data[key]
             latest_sensor_data["timestamp"] = ts
+
+            # ── Apply autonomous decisions if auto mode is enabled ────
+            if dashboard_settings.get("auto_mode", True):
+                key   = current_plant_key
+                plant = plant_db.get(key, {})
+                apply_autonomous_decisions(latest_sensor_data, plant)
 
             # ── Append to rolling in-memory history ──────────────
             snapshot = {

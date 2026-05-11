@@ -33,14 +33,16 @@ from PIL import Image
 load_dotenv(override=True)
 
 # ─── Configuration ────────────────────────────────────────────────
+BASE_DIR        = Path(__file__).resolve().parent
+PROJECT_DIR     = BASE_DIR.parent
 GEMINI_API_KEY  = os.getenv("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY_HERE")
 GEMINI_MODEL_ID = "gemini-2.0-flash"
-UPLOAD_DIR      = Path("uploads")
-FRONTEND_DIR    = Path("../frontend")
+UPLOAD_DIR      = BASE_DIR / "uploads"
+FRONTEND_DIR    = PROJECT_DIR / "frontend"
 MAX_IMAGE_SIZE  = 5 * 1024 * 1024   # 5 MB guard
-PLANTS_FILE     = Path("plants.json")
-SETTINGS_FILE   = Path("settings.json")
-DB_FILE         = Path("sensor_history.db")
+PLANTS_FILE     = BASE_DIR / "plants.json"
+SETTINGS_FILE   = BASE_DIR / "settings.json"
+DB_FILE         = BASE_DIR / "sensor_history.db"
 DB_RETENTION_DAYS = 90   # Prune readings older than this
 
 # ─── Logging ──────────────────────────────────────────────────────

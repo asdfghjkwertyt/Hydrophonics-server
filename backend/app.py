@@ -32,7 +32,7 @@ from PIL import Image
 load_dotenv(override=True)
 
 # ─── Configuration ────────────────────────────────────────────────
-GEMINI_API_KEY  = os.getenv("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY_HERE")
+GEMINI_API_KEY  = os.getenv("GEMINI_API_KEY", "AIzaSyDjfbGkSr1YIgUNdmXjM60NrGT1xzGkvOA")
 GEMINI_MODEL_ID = "gemini-2.0-flash"
 UPLOAD_DIR      = Path("uploads")
 FRONTEND_DIR    = Path("../frontend")
@@ -1396,6 +1396,80 @@ def set_tank_config():
                         "tank_length_cm": length, "sensor_offset_cm": offset}), 200
     except Exception as e:
         log.error(f"[TANK] set error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/monthly-data", methods=["GET"])
+def get_monthly_data():
+    """
+    Return daily-aggregated sensor averages for the last N days.
+    Query param: ?days=30  (default 30, max 90)
+    Response: { labels: ["May 01", ...], datasets: { air_temperature: [...], ... } }
+    """
+    try:
+        try:
+            days = max(1, min(int(request.args.get("days", 30)), 90))
+        except (ValueError, TypeError):
+            days = 30
+
+        conn = _get_conn()
+        cur  = conn.cursor()
+
+        # Pull daily averages from Supabase using DATE() truncation.
+        # The timestamp column is stored as TEXT in ISO-8601 format.
+        cur.execute("""
+            SELECT
+                DATE(timestamp)                        AS day,
+                ROUND(AVG(air_temperature)::numeric, 2)   AS air_temperature,
+                ROUND(AVG(humidity)::numeric, 2)           AS humidity,
+                ROUND(AVG(water_temperature)::numeric, 2)  AS water_temperature,
+                ROUND(AVG(ph)::numeric, 3)                 AS ph,
+                ROUND(AVG(tds)::numeric, 1)                AS tds,
+                ROUND(AVG(water_level)::numeric, 1)        AS water_level,
+                ROUND(AVG(sunlight)::numeric, 1)           AS sunlight
+            FROM sensor_readings
+            WHERE timestamp >= (NOW() AT TIME ZONE 'UTC' - INTERVAL '%s days')::TEXT
+            GROUP BY day
+            ORDER BY day ASC
+        """, (days,))
+
+        rows = cur.fetchall()
+        conn.close()
+
+        if not rows:
+            return jsonify({"labels": [], "datasets": {
+                "air_temperature": [], "humidity": [], "water_temperature": [],
+                "ph": [], "tds": [], "water_level": [], "sunlight": []
+            }, "days": days, "data_points": 0}), 200
+
+        sensor_keys = ["air_temperature", "humidity", "water_temperature",
+                       "ph", "tds", "water_level", "sunlight"]
+
+        labels   = []
+        datasets = {k: [] for k in sensor_keys}
+
+        for row in rows:
+            # Format date label as "May 18"
+            try:
+                dt = datetime.date.fromisoformat(str(row["day"]))
+                labels.append(dt.strftime("%b %d"))
+            except Exception:
+                labels.append(str(row["day"]))
+
+            for k in sensor_keys:
+                val = row.get(k)
+                datasets[k].append(float(val) if val is not None else None)
+
+        log.info(f"[MONTHLY] Returning {len(rows)} daily rows for last {days} days")
+        return jsonify({
+            "labels":      labels,
+            "datasets":    datasets,
+            "days":        days,
+            "data_points": len(rows),
+        }), 200
+
+    except Exception as e:
+        log.error(f"[MONTHLY] monthly-data error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 

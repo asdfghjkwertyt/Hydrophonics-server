@@ -18,13 +18,11 @@ import logging
 import datetime
 import psycopg2
 import psycopg2.extras
-import threading
 from pathlib import Path
 from threading import Lock
 from dotenv import load_dotenv
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
-from flask_socketio import SocketIO, emit
 import google.genai as genai
 from google.genai import types as genai_types
 from PIL import Image
@@ -34,15 +32,12 @@ from PIL import Image
 load_dotenv(override=True)
 
 # ─── Configuration ────────────────────────────────────────────────
-BASE_DIR        = Path(__file__).resolve().parent
-PROJECT_DIR     = BASE_DIR.parent
 GEMINI_API_KEY  = os.getenv("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY_HERE")
 GEMINI_MODEL_ID = "gemini-2.0-flash"
-UPLOAD_DIR      = BASE_DIR / "uploads"
-FRONTEND_DIR    = PROJECT_DIR / "frontend"
+UPLOAD_DIR      = Path("uploads")
+FRONTEND_DIR    = Path("../frontend")
 MAX_IMAGE_SIZE  = 5 * 1024 * 1024   # 5 MB guard
-DATABASE_URL    = os.getenv("DATABASE_URL", "")  # Supabase connection string
-DB_RETENTION_DAYS = 90   # Prune sensor readings older than this
+DATABASE_URL     = os.getenv("DATABASE_URL", "")  # Supabase PostgreSQL connection string
 
 # ─── Logging ──────────────────────────────────────────────────────
 logging.basicConfig(
@@ -55,7 +50,6 @@ log = logging.getLogger("HydroAI")
 # ─── Flask App ────────────────────────────────────────────────────
 app = Flask(__name__, static_folder=str(FRONTEND_DIR), static_url_path="")
 CORS(app)  # Allow cross-origin requests from the dashboard
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 UPLOAD_DIR.mkdir(exist_ok=True)
 
@@ -74,7 +68,6 @@ DEFAULT_PLANTS = {
         "humidity_min": 50,    "humidity_max": 70,
         "ph_min": 5.5,         "ph_max": 6.5,
         "tds_min": 500,        "tds_max": 800,
-        "shed_closed_angle": 10, "shed_open_angle": 170,
     },
     "tomato": {
         "display_name": "Tomato",
@@ -83,7 +76,6 @@ DEFAULT_PLANTS = {
         "humidity_min": 60,    "humidity_max": 80,
         "ph_min": 5.8,         "ph_max": 6.8,
         "tds_min": 700,        "tds_max": 1000,
-        "shed_closed_angle": 10, "shed_open_angle": 170,
     },
     "basil": {
         "display_name": "Basil",
@@ -92,7 +84,6 @@ DEFAULT_PLANTS = {
         "humidity_min": 55,    "humidity_max": 75,
         "ph_min": 5.5,         "ph_max": 6.5,
         "tds_min": 700,        "tds_max": 1120,
-        "shed_closed_angle": 10, "shed_open_angle": 170,
     },
     "spinach": {
         "display_name": "Spinach",
@@ -101,7 +92,6 @@ DEFAULT_PLANTS = {
         "humidity_min": 50,    "humidity_max": 70,
         "ph_min": 6.0,         "ph_max": 7.0,
         "tds_min": 1260,       "tds_max": 1610,
-        "shed_closed_angle": 10, "shed_open_angle": 170,
     },
     "strawberry": {
         "display_name": "Strawberry",
@@ -110,7 +100,6 @@ DEFAULT_PLANTS = {
         "humidity_min": 60,    "humidity_max": 80,
         "ph_min": 5.5,         "ph_max": 6.5,
         "tds_min": 1260,       "tds_max": 1540,
-        "shed_closed_angle": 10, "shed_open_angle": 170,
     },
     "mint": {
         "display_name": "Mint",
@@ -119,196 +108,22 @@ DEFAULT_PLANTS = {
         "humidity_min": 55,    "humidity_max": 70,
         "ph_min": 5.5,         "ph_max": 6.0,
         "tds_min": 1400,       "tds_max": 1680,
-        "shed_closed_angle": 10, "shed_open_angle": 170,
     },
 }
 
-# ─── Supabase / PostgreSQL helpers ──────────────────────────────────────
 def _get_conn():
-    """Open a new psycopg2 connection to Supabase."""
+    """Open a new psycopg2 connection to Supabase. Uses RealDictCursor."""
     url = DATABASE_URL
     if not url:
         raise RuntimeError("DATABASE_URL env var is not set")
+    # Ensure SSL is required (Supabase mandates it)
     if "sslmode" not in url:
         url += "?sslmode=require"
     conn = psycopg2.connect(url, cursor_factory=psycopg2.extras.RealDictCursor)
     conn.autocommit = False
     return conn
 
-def _kv_get(key: str, default=None):
-    try:
-        conn = _get_conn()
-        cur = conn.cursor()
-        cur.execute("SELECT value FROM kv_store WHERE key=%s", (key,))
-        row = cur.fetchone()
-        conn.close()
-        return json.loads(row["value"]) if row else default
-    except Exception as e:
-        log.warning(f"[KV] get({key}) failed: {e}")
-        return default
 
-def _kv_set(key: str, value):
-    try:
-        conn = _get_conn()
-        cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO kv_store(key,value) VALUES(%s,%s) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value",
-            (key, json.dumps(value))
-        )
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        log.warning(f"[KV] set({key}) failed: {e}")
-
-def load_plants_from_db() -> dict:
-    try:
-        conn = _get_conn()
-        cur = conn.cursor()
-        cur.execute("SELECT plant_key, data FROM custom_plants")
-        rows = cur.fetchall()
-        conn.close()
-        result = {}
-        for row in rows:
-            try:
-                result[row["plant_key"]] = json.loads(row["data"])
-            except Exception:
-                pass
-        if result:
-            log.info(f"[PLANTS] Loaded {len(result)} custom plant(s) from Supabase")
-        return result
-    except Exception as e:
-        log.warning(f"[PLANTS] DB load failed: {e}")
-        return {}
-
-def save_plant_to_db(key: str, plant: dict):
-    try:
-        conn = _get_conn()
-        cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO custom_plants(plant_key,data) VALUES(%s,%s) ON CONFLICT(plant_key) DO UPDATE SET data=EXCLUDED.data",
-            (key, json.dumps(plant))
-        )
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        log.warning(f"[PLANTS] save({key}) failed: {e}")
-
-def delete_plant_from_db(key: str):
-    try:
-        conn = _get_conn()
-        cur = conn.cursor()
-        cur.execute("DELETE FROM custom_plants WHERE plant_key=%s", (key,))
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        log.warning(f"[PLANTS] delete({key}) failed: {e}")
-
-# ─── Dashboard settings (stored in Supabase kv_store) ──────────────────────
-DEFAULT_SETTINGS = {
-    "current_plant": "lettuce",
-    "active_chart_tab": "env",
-    "refresh_interval_ms": 2000,
-    "notes": "",
-    "auto_mode": True,
-}
-
-def load_settings() -> dict:
-    try:
-        saved = _kv_get("dashboard_settings", {})
-        merged = {**DEFAULT_SETTINGS, **saved}
-        log.info(f"[SETTINGS] Loaded from Supabase — plant: {merged.get('current_plant')}, auto_mode: {merged.get('auto_mode')}")
-        return merged
-    except Exception as e:
-        log.warning(f"[SETTINGS] load failed: {e}")
-        return dict(DEFAULT_SETTINGS)
-
-def save_settings(settings: dict):
-    try:
-        _kv_set("dashboard_settings", settings)
-        log.info(f"[SETTINGS] Saved to Supabase — plant: {settings.get('current_plant')}, auto_mode: {settings.get('auto_mode')}")
-    except Exception as e:
-        log.warning(f"[SETTINGS] save failed: {e}")
-
-def _int_or_default(value, default):
-    try:
-        if value is None or value == "": return default
-        return int(value)
-    except (TypeError, ValueError): return default
-
-def _float_or_default(value, default):
-    try:
-        if value is None or value == "": return default
-        return float(value)
-    except (TypeError, ValueError): return default
-
-# Load persisted state from Supabase
-_saved_settings = load_settings()
-dashboard_settings: dict = _saved_settings
-
-_custom_plants = load_plants_from_db()
-plant_db: dict = {**DEFAULT_PLANTS, **_custom_plants}
-
-# ─── Shared In-Memory State ───────────────────────────────────────
-state_lock = Lock()
-
-# Currently selected plant — restored from settings.json on boot
-current_plant_key: str = dashboard_settings.get("current_plant", "lettuce")
-
-# Rolling plant alert messages
-MAX_ALERTS = 20
-plant_alerts: list = []
-
-latest_sensor_data: dict = {
-    "air_temperature":   0.0,
-    "humidity":          0.0,
-    "water_temperature": 0.0,
-    "ph":                7.0,
-    "tds":               0.0,
-    "water_level":       0,
-    "sunlight":          0,
-    "pump":              False,
-    "light":             False,
-    "mist":              False,
-    "shed":              False,
-    # Autonomous reason strings (populated by ESP32)
-    "pump_reason":       "Waiting for ESP32…",
-    "light_reason":      "Waiting for ESP32…",
-    "mist_reason":       "Waiting for ESP32…",
-    "shed_reason":       "Waiting for ESP32…",
-    # Autonomous reason strings
-    "pump_reason":       "Waiting for ESP32…",
-    "light_reason":      "Waiting for ESP32…",
-    "mist_reason":       "Waiting for ESP32…",
-    "shed_reason":       "Waiting for ESP32…",
-    # Thresholds
-    "shed_close_threshold": 70,
-    "light_on_threshold":   40,
-    "humidity_min":         45,
-    "humidity_max":         65,
-    "timestamp":         None,
-}
-
-latest_ai_result: dict = {
-    "disease_name":    "No data yet",
-    "confidence":      0,
-    "recommendation":  "Waiting for first plant image…",
-    "raw_response":    "",
-    "analysis_time":   None,
-    "status":          "pending",
-}
-
-pending_commands: dict = {
-    "pump":  None,
-    "light": None,
-    "mist":  None,
-    "shed":  None,
-}
-
-# ─── Sensor History Buffer (in-memory, rolling) ─────────────────────
-from collections import deque
-
-HISTORY_MAX = 180
-sensor_history: deque = deque(maxlen=HISTORY_MAX)
 def init_db():
     """Create all tables in Supabase if they don't already exist."""
     conn = _get_conn()
@@ -355,6 +170,7 @@ def init_db():
             );
         """)
         conn.commit()
+
         # Seed tank_config row if absent
         cur.execute("SELECT COUNT(*) AS cnt FROM tank_config WHERE id=1")
         if cur.fetchone()["cnt"] == 0:
@@ -364,6 +180,7 @@ def init_db():
                 (30, 30, 30, 0, now)
             )
             conn.commit()
+
         log.info("[DB] Supabase PostgreSQL tables ready")
     except Exception as e:
         conn.rollback()
@@ -372,8 +189,8 @@ def init_db():
         conn.close()
 
 
-def insert_reading(sensor: dict, ts: str):
-    """Insert one sensor snapshot into Supabase sensor_readings."""
+def _pg_insert_reading(sensor: dict, ts: str):
+    """Persist one sensor snapshot to Supabase sensor_readings."""
     try:
         conn = _get_conn()
         cur = conn.cursor()
@@ -399,38 +216,174 @@ def insert_reading(sensor: dict, ts: str):
         conn.commit()
         conn.close()
     except Exception as e:
-        log.warning(f"[DB] Insert failed: {e}")
+        log.warning(f"[DB] insert_reading failed: {e}")
 
 
-def prune_old_readings():
-    """Delete readings older than DB_RETENTION_DAYS."""
-    cutoff = (datetime.datetime.utcnow() - datetime.timedelta(days=DB_RETENTION_DAYS)).isoformat() + "Z"
+# ─── KV helpers (settings stored as key/value rows) ──────────────────────
+def _kv_get(key: str, default=None):
     try:
         conn = _get_conn()
         cur = conn.cursor()
-        cur.execute("DELETE FROM sensor_readings WHERE timestamp < %s", (cutoff,))
-        deleted = cur.rowcount
+        cur.execute("SELECT value FROM kv_store WHERE key=%s", (key,))
+        row = cur.fetchone()
+        conn.close()
+        return json.loads(row["value"]) if row else default
+    except Exception as e:
+        log.warning(f"[KV] get({key}) failed: {e}")
+        return default
+
+def _kv_set(key: str, value):
+    try:
+        conn = _get_conn()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO kv_store(key,value) VALUES(%s,%s) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value",
+            (key, json.dumps(value))
+        )
         conn.commit()
         conn.close()
-        if deleted:
-            log.info(f"[DB] Pruned {deleted} readings older than {DB_RETENTION_DAYS} days")
     except Exception as e:
-        log.warning(f"[DB] Prune failed: {e}")
+        log.warning(f"[KV] set({key}) failed: {e}")
 
 
-def _prune_loop():
-    """Background thread: prune DB once per day."""
-    while True:
-        threading.Event().wait(86400)
-        prune_old_readings()
+# ─── Custom plants helpers ────────────────────────────────────────────────
+def load_plants_from_db() -> dict:
+    try:
+        conn = _get_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT plant_key, data FROM custom_plants")
+        rows = cur.fetchall()
+        conn.close()
+        result = {}
+        for row in rows:
+            try:
+                result[row["plant_key"]] = json.loads(row["data"])
+            except Exception:
+                pass
+        if result:
+            log.info(f"[PLANTS] Loaded {len(result)} custom plant(s) from Supabase")
+        return result
+    except Exception as e:
+        log.warning(f"[PLANTS] DB load failed: {e}")
+        return {}
+
+def save_plant_to_db(key: str, plant: dict):
+    try:
+        conn = _get_conn()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO custom_plants(plant_key,data) VALUES(%s,%s) ON CONFLICT(plant_key) DO UPDATE SET data=EXCLUDED.data",
+            (key, json.dumps(plant))
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        log.warning(f"[PLANTS] DB save({key}) failed: {e}")
+
+def delete_plant_from_db(key: str):
+    try:
+        conn = _get_conn()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM custom_plants WHERE plant_key=%s", (key,))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        log.warning(f"[PLANTS] DB delete({key}) failed: {e}")
 
 
-# Initialise Supabase tables on startup
+# ─── Dashboard settings (stored in kv_store) ─────────────────────────────
+DEFAULT_SETTINGS = {
+    "current_plant": "lettuce",
+    "active_chart_tab": "env",
+    "refresh_interval_ms": 2000,
+    "notes": "",
+    "auto_mode": True,
+}
+
+def load_settings() -> dict:
+    try:
+        saved = _kv_get("dashboard_settings", {})
+        merged = {**DEFAULT_SETTINGS, **saved}
+        log.info(f"[SETTINGS] Loaded from Supabase — plant: {merged.get('current_plant')}, auto_mode: {merged.get('auto_mode')}")
+        return merged
+    except Exception as e:
+        log.warning(f"[SETTINGS] load failed: {e}")
+        return dict(DEFAULT_SETTINGS)
+
+def save_settings(settings: dict):
+    try:
+        _kv_set("dashboard_settings", settings)
+        log.info(f"[SETTINGS] Saved to Supabase — plant: {settings.get('current_plant')}, auto_mode: {settings.get('auto_mode')}")
+    except Exception as e:
+        log.warning(f"[SETTINGS] save failed: {e}")
+
+
+# Initialise DB tables, then load persisted state
 init_db()
+_saved_settings = load_settings()
+dashboard_settings: dict = _saved_settings
 
-# Start background pruning thread
-_pruner = threading.Thread(target=_prune_loop, daemon=True, name="db-pruner")
-_pruner.start()
+# ─── Shared In-Memory State ───────────────────────────────────────
+state_lock = Lock()
+
+# Currently selected plant — restored from DB on boot
+current_plant_key: str = dashboard_settings.get("current_plant", "lettuce")
+
+# Plant database: defaults merged with DB-stored customisations
+_custom_plants = load_plants_from_db()
+plant_db: dict = {**DEFAULT_PLANTS, **_custom_plants}
+
+# Rolling plant alert messages
+MAX_ALERTS = 20
+plant_alerts: list = []
+
+latest_sensor_data: dict = {
+    "air_temperature":   0.0,
+    "humidity":          0.0,
+    "water_temperature": 0.0,
+    "ph":                7.0,
+    "tds":               0.0,
+    "water_level":       0,
+    "sunlight":          0,
+    "pump":              False,
+    "light":             False,
+    "mist":              False,
+    "shed":              False,
+    # Autonomous reason strings (populated by ESP32)
+    "pump_reason":       "Waiting for ESP32…",
+    "light_reason":      "Waiting for ESP32…",
+    "mist_reason":       "Waiting for ESP32…",
+    "shed_reason":       "Waiting for ESP32…",
+    # Thresholds reported by ESP32
+    "shed_close_threshold": 70,
+    "light_on_threshold":   40,
+    "humidity_min":         45,
+    "humidity_max":         65,
+    "timestamp":         None,
+}
+
+latest_ai_result: dict = {
+    "disease_name":    "No data yet",
+    "confidence":      0,
+    "recommendation":  "Waiting for first plant image…",
+    "raw_response":    "",
+    "analysis_time":   None,
+    "status":          "pending",   # pending | healthy | diseased | error
+}
+
+pending_commands: dict = {
+    "pump":  None,
+    "light": None,
+    "mist":  None,
+    "shed":  None,
+}
+
+# ─── Sensor History Buffer ────────────────────────────────────────
+from collections import deque
+
+HISTORY_MAX = 180   # keep last 180 readings (6 min at 2 s intervals)
+
+sensor_history: deque = deque(maxlen=HISTORY_MAX)  # each entry = snapshot dict
 
 # ─── Gemini Client Setup ─────────────────────────────────────────
 _GEMINI_CLIENT_KEY = None
@@ -752,18 +705,17 @@ def add_plant():
             # Optional extended thresholds (use sensible defaults if not provided)
             "water_temp_min":       float(data.get("water_temp_min", 18)),
             "water_temp_max":       float(data.get("water_temp_max", 26)),
-            "water_level_warn":     _int_or_default(data.get("water_level_warn"), 50),
-            "water_level_crit":     _int_or_default(data.get("water_level_crit"), 25),
-            "light_on_threshold":   _int_or_default(data.get("light_on_threshold"), 40),
-            "light_off_threshold":  _int_or_default(data.get("light_off_threshold"), 55),
-            "shed_close_threshold": _int_or_default(data.get("shed_close_threshold"), 70),
-            "shed_open_threshold":  _int_or_default(data.get("shed_open_threshold"), 50),
-            "shed_closed_angle":    _int_or_default(data.get("shed_closed_angle"), 10),
-            "shed_open_angle":      _int_or_default(data.get("shed_open_angle"), 170),
+            "water_level_warn":     int(data.get("water_level_warn",  50)),
+            "water_level_crit":     int(data.get("water_level_crit",  25)),
+            "light_on_threshold":   int(data.get("light_on_threshold",  40)),
+            "light_off_threshold":  int(data.get("light_off_threshold", 55)),
+            "shed_close_threshold": int(data.get("shed_close_threshold",70)),
+            "shed_open_threshold":  int(data.get("shed_open_threshold", 50)),
         }
 
         with state_lock:
             plant_db[key] = plant_entry
+            # Persist to DB (custom plants only)
             save_plant_to_db(key, plant_entry)
 
         log.info(f"[PLANT] Added/updated custom plant: {key}")
@@ -806,18 +758,16 @@ def update_plant():
                 "water_level_warn","water_level_crit",
                 "light_on_threshold","light_off_threshold",
                 "shed_close_threshold","shed_open_threshold",
-                "shed_closed_angle","shed_open_angle",
             ]
             editable_str = ["display_name", "emoji"]
             for field in editable_float:
-                if field in data:
-                    plant_db[key][field] = _float_or_default(data[field], plant_db[key][field])
+                if field in data: plant_db[key][field] = float(data[field])
             for field in editable_int:
-                if field in data:
-                    plant_db[key][field] = _int_or_default(data[field], plant_db[key].get(field, 0))
+                if field in data: plant_db[key][field] = int(data[field])
             for field in editable_str:
                 if field in data: plant_db[key][field] = str(data[field])
 
+            # Persist to DB (save modified plant — includes modified defaults)
             save_plant_to_db(key, dict(plant_db[key]))
             updated = dict(plant_db[key])
 
@@ -868,197 +818,54 @@ def get_plant_alerts():
 
 
 # ─────────────────────────────────────────────────────────────────
-#  ROUTES – Tank Configuration
-# ─────────────────────────────────────────────────────────────────
-@app.route("/tank-config", methods=["GET"])
-def get_tank_config():
-    """Get current tank configuration (dimensions and sensor offset)."""
-    try:
-        conn = _get_conn()
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM tank_config WHERE id=1")
-        cfg = cur.fetchone()
-        conn.close()
-        if not cfg:
-            return jsonify({"tank_height_cm": 30, "tank_width_cm": 30,
-                            "tank_length_cm": 30, "sensor_offset_cm": 0}), 200
-        return jsonify({
-            "tank_height_cm": cfg["tank_height_cm"],
-            "tank_width_cm": cfg["tank_width_cm"],
-            "tank_length_cm": cfg["tank_length_cm"],
-            "sensor_offset_cm": cfg["sensor_offset_cm"],
-            "updated_at": cfg["updated_at"],
-        }), 200
-    except Exception as e:
-        log.error(f"[TANK] get_tank_config error: {e}")
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/tank-config", methods=["POST"])
-def set_tank_config():
-    """Set tank configuration (height, width, length in cm; sensor offset in cm)."""
-    try:
-        data = request.get_json(force=True, silent=True)
-        if not data:
-            return jsonify({"error": "Invalid JSON"}), 400
-        height = float(data.get("tank_height_cm", 30))
-        width  = float(data.get("tank_width_cm", 30))
-        length = float(data.get("tank_length_cm", 30))
-        offset = float(data.get("sensor_offset_cm", 0))
-        if height <= 0 or width <= 0 or length <= 0:
-            return jsonify({"error": "Tank dimensions must be positive"}), 400
-        now = datetime.datetime.utcnow().isoformat() + "Z"
-        conn = _get_conn()
-        cur = conn.cursor()
-        cur.execute(
-            "UPDATE tank_config SET tank_height_cm=%s, tank_width_cm=%s, tank_length_cm=%s, sensor_offset_cm=%s, updated_at=%s WHERE id=1",
-            (height, width, length, offset, now)
-        )
-        conn.commit()
-        conn.close()
-        log.info(f"[TANK] Config updated: {height}×{width}×{length}cm, offset={offset}cm")
-        return jsonify({"status": "ok", "tank_height_cm": height, "tank_width_cm": width,
-                        "tank_length_cm": length, "sensor_offset_cm": offset}), 200
-    except Exception as e:
-        log.error(f"[TANK] set_tank_config error: {e}")
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/water-level-liters", methods=["GET"])
-def get_water_level_liters():
-    """Calculate water level in liters based on current sensor reading and tank config."""
-    try:
-        conn = _get_conn()
-        cur = conn.cursor()
-        cur.execute("SELECT water_level FROM sensor_readings ORDER BY timestamp DESC LIMIT 1")
-        latest = cur.fetchone()
-        cur.execute("SELECT * FROM tank_config WHERE id=1")
-        cfg = cur.fetchone()
-        conn.close()
-        water_level_raw = latest["water_level"] if latest else 0
-        height = cfg["tank_height_cm"] if cfg else 30
-        width  = cfg["tank_width_cm"]  if cfg else 30
-        length = cfg["tank_length_cm"] if cfg else 30
-        offset = cfg["sensor_offset_cm"] if cfg else 0
-        water_level_cm = ((water_level_raw / 100) * height) - offset
-        water_level_cm = max(0, min(water_level_cm, height))
-        tank_capacity_liters = (width * length * height) / 1000
-        water_volume_liters  = (width * length * water_level_cm) / 1000
-        return jsonify({
-            "water_level_cm": round(water_level_cm, 2),
-            "water_volume_liters": round(water_volume_liters, 2),
-            "tank_capacity_liters": round(tank_capacity_liters, 2),
-            "water_level_percent": round((water_volume_liters / tank_capacity_liters) * 100, 1) if tank_capacity_liters > 0 else 0,
-        }), 200
-    except Exception as e:
-        log.error(f"[TANK] get_water_level_liters error: {e}")
-        return jsonify({"error": str(e)}), 500
-
-
-# ─────────────────────────────────────────────────────────────────
-#  AUTO-MODE DECISION LOGIC
-#  Calculate actuator states and reasons based on sensor readings
-# ─────────────────────────────────────────────────────────────────
-def calculate_autonomous_decisions(sensor_data: dict, plant: dict) -> dict:
-    """
-    Calculate autonomous control decisions based on sensor data and plant thresholds.
-    Returns dict with actuator states and reasons.
-    
-    Rules:
-    - Pump: Always ON (continuous circulation)
-    - Light: ON if sunlight < light_on_threshold, OFF if >= light_off_threshold
-    - Mist: ON if humidity < humidity_min, OFF if >= humidity_max
-    - Shed: CLOSED (0) if sunlight > shed_close_threshold, OPEN (1) if < shed_open_threshold
-    """
-    decisions = {}
-    
-    # ── Pump (always on) ────────────────────────────────────────
-    decisions["pump"] = {
-        "state": True,
-        "reason": "Continuous — always on"
-    }
-    
-    # ── Light (based on sunlight) ───────────────────────────────
-    sunlight = sensor_data.get("sunlight", 0)
-    light_on_threshold = plant.get("light_on_threshold", 40)
-    light_off_threshold = plant.get("light_off_threshold", 55)
-    
-    if sunlight < light_on_threshold:
-        light_state = True
-        light_reason = f"Low sunlight ({sunlight:.0f}%) — lights ON"
-    elif sunlight >= light_off_threshold:
-        light_state = False
-        light_reason = f"Sufficient sunlight ({sunlight:.0f}%) — lights OFF"
-    else:
-        # Hysteresis zone: maintain current state
-        light_state = sensor_data.get("light", False)
-        light_reason = f"Sunlight {sunlight:.0f}% — holding state"
-    
-    decisions["light"] = {
-        "state": light_state,
-        "reason": light_reason
-    }
-    
-    # ── Mist (based on humidity) ────────────────────────────────
-    humidity = sensor_data.get("humidity", 0)
-    humidity_min = plant.get("humidity_min", 45)
-    humidity_max = plant.get("humidity_max", 65)
-    
-    if humidity < humidity_min:
-        mist_state = True
-        mist_reason = f"Low humidity ({humidity:.0f}%) — mist ON"
-    elif humidity >= humidity_max:
-        mist_state = False
-        mist_reason = f"Humidity adequate ({humidity:.0f}%) — mist OFF"
-    else:
-        # Hysteresis zone: maintain current state
-        mist_state = sensor_data.get("mist", False)
-        mist_reason = f"Humidity {humidity:.0f}% — holding state"
-    
-    decisions["mist"] = {
-        "state": mist_state,
-        "reason": mist_reason
-    }
-    
-    # ── Shed (based on sunlight) ────────────────────────────────
-    shed_close_threshold = plant.get("shed_close_threshold", 70)
-    shed_open_threshold = plant.get("shed_open_threshold", 50)
-    
-    if sunlight > shed_close_threshold:
-        shed_state = False  # Closed (0)
-        shed_reason = f"Intense sunlight ({sunlight:.0f}%) — shade CLOSED"
-    elif sunlight < shed_open_threshold:
-        shed_state = True  # Open (1)
-        shed_reason = f"Low sunlight ({sunlight:.0f}%) — shade OPEN"
-    else:
-        # Hysteresis zone: maintain current state
-        shed_state = sensor_data.get("shed", True)
-        shed_reason = f"Sunlight {sunlight:.0f}% — holding state"
-    
-    decisions["shed"] = {
-        "state": shed_state,
-        "reason": shed_reason
-    }
-    
-    return decisions
-
-
-def apply_autonomous_decisions(sensor_data: dict, plant: dict):
-    """
-    Calculate autonomous decisions and update sensor_data with states and reasons.
-    Called whenever sensor data is received in auto mode.
-    """
-    decisions = calculate_autonomous_decisions(sensor_data, plant)
-    
-    for actuator in ["pump", "light", "mist", "shed"]:
-        if actuator in decisions:
-            sensor_data[actuator] = decisions[actuator]["state"]
-            sensor_data[f"{actuator}_reason"] = decisions[actuator]["reason"]
-
-
-# ─────────────────────────────────────────────────────────────────
 #  ROUTES – Sensor Data
 # ─────────────────────────────────────────────────────────────────
+def _apply_autonomous_decisions(sensor_data: dict, plant: dict):
+    """Apply auto-mode actuator decisions based on sensor readings and plant thresholds."""
+    sunlight     = sensor_data.get("sunlight", 0)
+    humidity     = sensor_data.get("humidity", 0)
+    light_on     = plant.get("light_on_threshold",   40)
+    light_off    = plant.get("light_off_threshold",  55)
+    hum_min      = plant.get("humidity_min",          45)
+    hum_max      = plant.get("humidity_max",          65)
+    shed_close   = plant.get("shed_close_threshold", 70)
+    shed_open_th = plant.get("shed_open_threshold",  50)
+
+    # Pump: always ON
+    sensor_data["pump"]        = True
+    sensor_data["pump_reason"] = "Continuous — always on"
+
+    # Light
+    if sunlight < light_on:
+        sensor_data["light"]        = True
+        sensor_data["light_reason"] = f"Low sunlight ({sunlight:.0f}%) — lights ON"
+    elif sunlight >= light_off:
+        sensor_data["light"]        = False
+        sensor_data["light_reason"] = f"Sufficient sunlight ({sunlight:.0f}%) — lights OFF"
+    else:
+        sensor_data["light_reason"] = f"Sunlight {sunlight:.0f}% — holding state"
+
+    # Mist
+    if humidity < hum_min:
+        sensor_data["mist"]        = True
+        sensor_data["mist_reason"] = f"Low humidity ({humidity:.0f}%) — mist ON"
+    elif humidity >= hum_max:
+        sensor_data["mist"]        = False
+        sensor_data["mist_reason"] = f"Humidity adequate ({humidity:.0f}%) — mist OFF"
+    else:
+        sensor_data["mist_reason"] = f"Humidity {humidity:.0f}% — holding state"
+
+    # Shed
+    if sunlight > shed_close:
+        sensor_data["shed"]        = False
+        sensor_data["shed_reason"] = f"Intense sunlight ({sunlight:.0f}%) — shade CLOSED"
+    elif sunlight < shed_open_th:
+        sensor_data["shed"]        = True
+        sensor_data["shed_reason"] = f"Low sunlight ({sunlight:.0f}%) — shade OPEN"
+    else:
+        sensor_data["shed_reason"] = f"Sunlight {sunlight:.0f}% — holding state"
+
+
 @app.route("/sensor-data", methods=["POST"])
 def receive_sensor_data():
     """Receive JSON sensor payload from ESP32."""
@@ -1070,34 +877,20 @@ def receive_sensor_data():
 
         ts = datetime.datetime.utcnow().isoformat() + "Z"
         with state_lock:
-            # Update sensor readings — but in manual mode, DON'T overwrite actuator states
-            # (the ESP32 reports what IT is doing, but dashboard shows what WE commanded)
-            actuator_keys = {"pump", "light", "mist", "shed"}
-            is_auto = dashboard_settings.get("auto_mode", True)
+            # Update only fields that are present in the payload
             for key in latest_sensor_data:
                 if key in data:
-                    # In manual mode, skip actuator state updates from ESP32 payload
-                    # so manual commands shown on dashboard don't flicker back
-                    if not is_auto and key in actuator_keys:
-                        continue
                     latest_sensor_data[key] = data[key]
             latest_sensor_data["timestamp"] = ts
 
             # ── Apply autonomous decisions if auto mode is enabled ────
-            auto = dashboard_settings.get("auto_mode", True)
-            if auto:
+            if dashboard_settings.get("auto_mode", True):
                 key   = current_plant_key
                 plant = plant_db.get(key, {})
-                apply_autonomous_decisions(latest_sensor_data, plant)
-            else:
-                # Manual mode: keep existing actuator states, only update reasons
-                for act in ("pump", "light", "mist", "shed"):
-                    reason = latest_sensor_data.get(f"{act}_reason", "")
-                    if "Auto" in reason or "Autonomous" in reason or reason == "Waiting for ESP32…":
-                        latest_sensor_data[f"{act}_reason"] = "Manual mode active"
+                _apply_autonomous_decisions(latest_sensor_data, plant)
 
-            # ── Append to rolling in-memory history ──────────────
-            snapshot = {
+            # ── Append to rolling history ──
+            sensor_history.append({
                 "t":                ts,
                 "air_temperature":  latest_sensor_data["air_temperature"],
                 "humidity":         latest_sensor_data["humidity"],
@@ -1110,11 +903,7 @@ def receive_sensor_data():
                 "light":            int(latest_sensor_data["light"]),
                 "mist":             int(latest_sensor_data["mist"]),
                 "shed":             int(latest_sensor_data["shed"]),
-            }
-            sensor_history.append(snapshot)
-
-            # ── Persist to SQLite database ────────────────────────
-            insert_reading(latest_sensor_data, ts)
+            })
 
             # ── Check plant-specific alerts ──────────────────────
             key   = current_plant_key
@@ -1126,10 +915,15 @@ def receive_sensor_data():
 
         log.info(f"[SENSOR] Data received: temp={data.get('air_temperature')}°C "
                  f"pH={data.get('ph')} TDS={data.get('tds')}ppm")
-        
-        # ── Emit status update to dashboard via WebSocket ─────
-        socketio.emit('status_update', latest_sensor_data, namespace='/')
-        
+
+        # Persist to Supabase asynchronously (non-blocking)
+        import threading
+        threading.Thread(
+            target=_pg_insert_reading,
+            args=(dict(latest_sensor_data), ts),
+            daemon=True
+        ).start()
+
         return jsonify({"status": "ok"}), 200
 
     except Exception as e:
@@ -1179,95 +973,6 @@ def get_history():
     datasets = {k: [e.get(k, 0) for e in entries] for k in keys}
 
     return jsonify({"labels": labels, "datasets": datasets}), 200
-
-
-# ─────────────────────────────────────────────────────────────────
-#  ROUTE – Monthly/Daily Aggregate Data (from SQLite)
-# ─────────────────────────────────────────────────────────────────
-@app.route("/monthly-data", methods=["GET"])
-def get_monthly_data():
-    """
-    Return daily averages for each sensor over the last N days.
-    Query param: ?days=30 (default 30, max 90)
-    Dates are expressed in IST (UTC+5:30).
-    Response: { labels:["Apr 01", ...], datasets:{air_temperature:[...], ...}, total_readings: N }
-    """
-    try:
-        days = min(int(request.args.get("days", 30)), DB_RETENTION_DAYS)
-    except (ValueError, TypeError):
-        days = 30
-
-    IST_OFFSET = datetime.timedelta(hours=5, minutes=30)
-    cutoff_utc = datetime.datetime.utcnow() - datetime.timedelta(days=days)
-    cutoff_str = cutoff_utc.isoformat() + "Z"
-
-    try:
-        conn = _get_conn()
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT
-                timestamp,
-                air_temperature, humidity, water_temperature,
-                ph, tds, water_level, sunlight
-            FROM sensor_readings
-            WHERE timestamp >= %s
-            ORDER BY timestamp ASC
-        """, (cutoff_str,))
-        rows = cur.fetchall()
-        cur.execute("SELECT COUNT(*) AS cnt FROM sensor_readings WHERE timestamp >= %s", (cutoff_str,))
-        total_readings = cur.fetchone()["cnt"]
-        conn.close()
-    except Exception as e:
-        log.error(f"[MONTHLY] DB query failed: {e}")
-        return jsonify({"error": str(e)}), 500
-
-    if not rows:
-        return jsonify({"labels": [], "datasets": {}, "total_readings": 0}), 200
-
-    # ── Group by IST date ─────────────────────────────────────────
-    sensor_keys = ["air_temperature", "humidity", "water_temperature",
-                   "ph", "tds", "water_level", "sunlight"]
-
-    from collections import defaultdict
-    day_buckets = defaultdict(lambda: {k: [] for k in sensor_keys})
-
-    for row in rows:
-        try:
-            ts_str = row["timestamp"].replace("Z", "+00:00")
-            utc_dt  = datetime.datetime.fromisoformat(ts_str)
-        except Exception:
-            continue
-        ist_dt   = utc_dt + IST_OFFSET
-        day_label = ist_dt.strftime("%b %d")   # e.g. "Apr 01"
-        bucket    = day_buckets[ist_dt.strftime("%Y-%m-%d")]  # sort key
-        bucket["_label"] = day_label
-        for k in sensor_keys:
-            val = row[k]
-            if val is not None:
-                bucket[k].append(float(val))
-
-    # ── Compute daily averages ────────────────────────────────────
-    sorted_days  = sorted(day_buckets.keys())          # chronological
-    labels       = [day_buckets[d].get("_label", d) for d in sorted_days]
-    datasets     = {k: [] for k in sensor_keys}
-
-    for d in sorted_days:
-        bucket = day_buckets[d]
-        for k in sensor_keys:
-            vals = bucket.get(k, [])
-            if vals:
-                avg = round(sum(vals) / len(vals), 2)
-            else:
-                avg = None
-            datasets[k].append(avg)
-
-    log.info(f"[MONTHLY] Returning {len(labels)} daily buckets ({total_readings} readings, last {days} days)")
-    return jsonify({
-        "labels":         labels,
-        "datasets":       datasets,
-        "total_readings": total_readings,
-        "days":           days,
-    }), 200
 
 
 @app.route("/insights", methods=["GET"])
@@ -1507,8 +1212,9 @@ def get_ai_result():
 @app.route("/control", methods=["GET"])
 def get_control():
     """
-    ESP32 polls this to receive pending commands with retries.
-    Dashboard GETs should not consume the queue.
+    ESP32 polls this to receive pending commands.
+    Dashboard reads should not consume commands, or they can clear the
+    queue before the ESP32 sees it.
     """
     source = request.args.get("source", "").lower()
     consume = source == "esp32"
@@ -1516,16 +1222,12 @@ def get_control():
     with state_lock:
         # Build response with only set commands
         response = {k: v for k, v in pending_commands.items() if v is not None}
-        response["auto_mode"] = dashboard_settings.get("auto_mode", True)
-        
-        # Only the ESP32 should consume the queue (on successful retrieval)
+        # Only the ESP32 should consume the queue.
         if consume:
             for k in response:
-                if k != "auto_mode":
-                    pending_commands[k] = None
-            if response:  # Log only if commands were delivered
-                log.info(f"[CONTROL] Delivered to ESP32: {response}")
-    
+                pending_commands[k] = None
+
+    log.info(f"[CONTROL] GET from {source or 'dashboard'} – delivering {response}{' and clearing' if consume else ' without clearing'}.")
     return jsonify(response), 200
 
 
@@ -1568,56 +1270,31 @@ def get_autonomous_status():
 @app.route("/control", methods=["POST"])
 def set_control():
     """
-    Dashboard POSTs control commands here (fast path).
-    Body: {"pump": true/false, "light": true/false, "mist": true/false, "shed": true/false}
-    Validates input and queues commands for ESP32 to consume.
+    Dashboard POSTs control commands here.
+    Body: {"pump": true/false, "light": true/false, ...}
     """
     try:
         data = request.get_json(force=True, silent=True)
         if not data:
-            log.warning(f"[CONTROL] POST: Empty or invalid JSON body")
-            return jsonify({"error": "Invalid JSON body"}), 400
+            return jsonify({"error": "Invalid JSON"}), 400
 
         valid_keys = {"pump", "light", "mist", "shed"}
         updated = {}
 
         with state_lock:
             for key, value in data.items():
-                # Validate: key must be in valid_keys and value must be bool
-                if key not in valid_keys:
-                    log.warning(f"[CONTROL] POST: Ignoring unknown key '{key}'")
-                    continue
-                if not isinstance(value, bool):
-                    log.warning(f"[CONTROL] POST: Key '{key}' has non-bool value: {type(value).__name__}")
-                    return jsonify({"error": f"Key '{key}' must be boolean, got {type(value).__name__}"}), 400
-
-                # Queue the command
-                pending_commands[key] = value
-                # Optimistic update for dashboard immediate feedback
-                latest_sensor_data[key] = value
-                latest_sensor_data[f"{key}_reason"] = "Manual override active"
-                updated[key] = value
-                log.info(f"[CONTROL] Queued: {key.upper()} → {value}")
+                if key in valid_keys and isinstance(value, bool):
+                    pending_commands[key] = value
+                    latest_sensor_data[key] = value  # Optimistic update for dashboard
+                    latest_sensor_data[f"{key}_reason"] = "Manual override active"
+                    updated[key] = value
+                    log.info(f"[CONTROL] {key.upper()} → {'ON' if value else 'OFF'}")
 
         if not updated:
-            log.warning(f"[CONTROL] POST: No valid commands in {list(data.keys())}")
             return jsonify({"error": "No valid commands found"}), 400
 
-        # ── Switch to manual mode automatically when a command is sent ──
-        with state_lock:
-            if dashboard_settings.get("auto_mode", True):
-                dashboard_settings["auto_mode"] = False
-                save_settings(dashboard_settings)
-                log.info("[CONTROL] Auto-switched to Manual mode due to manual command")
+        return jsonify({"status": "queued", "commands": updated}), 200
 
-        # ── Emit control command to ESP32 and Dashboard via WebSocket ──
-        socketio.emit('control_event', updated, namespace='/')
-        socketio.emit('control_event', updated, namespace='/esp32')
-        log.info(f"[CONTROL] Emitted to WebSockets: {updated}")
-
-        log.info(f"[CONTROL] POST accepted {len(updated)} command(s): {list(updated.keys())}")
-        return jsonify({"status": "queued", "commands": updated, "count": len(updated)}), 200
-        
     except Exception as e:
         log.error(f"[CONTROL] POST error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
@@ -1639,7 +1316,7 @@ def get_dashboard_settings():
 def post_dashboard_settings():
     """
     Update one or more dashboard settings.
-    Body: { "active_chart_tab": "water", "refresh_interval_ms": 3000, "notes": "..." }
+    Body: { "active_chart_tab": "water", "refresh_interval_ms": 3000, "notes": "...", "auto_mode": true }
     Note: 'current_plant' is managed via /set-plant — it is ignored here.
     """
     global dashboard_settings
@@ -1666,6 +1343,97 @@ def post_dashboard_settings():
 
 
 # ─────────────────────────────────────────────────────────────────
+#  ROUTES – Tank Configuration
+# ─────────────────────────────────────────────────────────────────
+@app.route("/tank-config", methods=["GET"])
+def get_tank_config():
+    """Get current tank dimensions and sensor offset."""
+    try:
+        conn = _get_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM tank_config WHERE id=1")
+        cfg = cur.fetchone()
+        conn.close()
+        if not cfg:
+            return jsonify({"tank_height_cm": 30, "tank_width_cm": 30,
+                            "tank_length_cm": 30, "sensor_offset_cm": 0}), 200
+        return jsonify({
+            "tank_height_cm":   cfg["tank_height_cm"],
+            "tank_width_cm":    cfg["tank_width_cm"],
+            "tank_length_cm":   cfg["tank_length_cm"],
+            "sensor_offset_cm": cfg["sensor_offset_cm"],
+            "updated_at":       cfg["updated_at"],
+        }), 200
+    except Exception as e:
+        log.error(f"[TANK] get error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/tank-config", methods=["POST"])
+def set_tank_config():
+    """Save tank dimensions and sensor offset."""
+    try:
+        data = request.get_json(force=True, silent=True)
+        if not data:
+            return jsonify({"error": "Invalid JSON"}), 400
+        height = float(data.get("tank_height_cm", 30))
+        width  = float(data.get("tank_width_cm",  30))
+        length = float(data.get("tank_length_cm", 30))
+        offset = float(data.get("sensor_offset_cm", 0))
+        if height <= 0 or width <= 0 or length <= 0:
+            return jsonify({"error": "Dimensions must be positive"}), 400
+        now = datetime.datetime.utcnow().isoformat() + "Z"
+        conn = _get_conn()
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE tank_config SET tank_height_cm=%s, tank_width_cm=%s, tank_length_cm=%s, sensor_offset_cm=%s, updated_at=%s WHERE id=1",
+            (height, width, length, offset, now)
+        )
+        conn.commit()
+        conn.close()
+        log.info(f"[TANK] Config saved: {height}×{width}×{length}cm, offset={offset}cm")
+        return jsonify({"status": "ok", "tank_height_cm": height, "tank_width_cm": width,
+                        "tank_length_cm": length, "sensor_offset_cm": offset}), 200
+    except Exception as e:
+        log.error(f"[TANK] set error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/water-level-liters", methods=["GET"])
+def get_water_level_liters():
+    """Return current water volume in liters based on tank config."""
+    try:
+        conn = _get_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT water_level FROM sensor_readings ORDER BY timestamp DESC LIMIT 1")
+        latest = cur.fetchone()
+        cur.execute("SELECT * FROM tank_config WHERE id=1")
+        cfg = cur.fetchone()
+        conn.close()
+
+        water_level_raw = latest["water_level"] if latest else 0
+        height = cfg["tank_height_cm"]   if cfg else 30
+        width  = cfg["tank_width_cm"]    if cfg else 30
+        length = cfg["tank_length_cm"]   if cfg else 30
+        offset = cfg["sensor_offset_cm"] if cfg else 0
+
+        water_level_cm       = ((water_level_raw / 100) * height) - offset
+        water_level_cm       = max(0, min(water_level_cm, height))
+        tank_capacity_liters = (width * length * height) / 1000
+        water_volume_liters  = (width * length * water_level_cm) / 1000
+
+        return jsonify({
+            "water_level_cm":       round(water_level_cm, 2),
+            "water_volume_liters":  round(water_volume_liters, 2),
+            "tank_capacity_liters": round(tank_capacity_liters, 2),
+            "water_level_percent":  round((water_volume_liters / tank_capacity_liters) * 100, 1) if tank_capacity_liters > 0 else 0,
+        }), 200
+    except Exception as e:
+        log.error(f"[TANK] water-level-liters error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+# ─────────────────────────────────────────────────────────────────
 #  ROUTES – Frontend & Utilities
 # ─────────────────────────────────────────────────────────────────
 @app.route("/")
@@ -1682,7 +1450,7 @@ def serve_latest_image():
         return send_from_directory(str(UPLOAD_DIR), "latest.jpg",
                                    mimetype="image/jpeg",
                                    max_age=0)
-    return ("", 204)
+    return jsonify({"error": "No image available yet"}), 404
 
 
 @app.route("/health")
@@ -1696,6 +1464,7 @@ def health_check():
         "gemini":        bool(GEMINI_API_KEY and GEMINI_API_KEY != "YOUR_GEMINI_API_KEY_HERE"),
         "current_plant": pkey,
         "total_plants":  len(plant_db),
+        "auto_mode":     dashboard_settings.get("auto_mode", True),
     }), 200
 
 
@@ -1710,22 +1479,12 @@ if __name__ == "__main__":
     log.info(f" Upload directory: {UPLOAD_DIR.resolve()}")
     log.info(f" Plant profiles loaded: {len(plant_db)} ({', '.join(plant_db.keys())})")
     log.info(f" Active plant: {current_plant_key}")
-    log.info(" Starting server on 0.0.0.0:5000 with WebSockets …")
+    log.info(" Starting server on 0.0.0.0:5000 …")
     log.info("=" * 60)
 
-    socketio.run(
-        app,
+    app.run(
         host="0.0.0.0",
         port=5000,
-        debug=False,
+        debug=False,      # Set True for development, False for production
+        threaded=True,    # Handle concurrent requests from ESP32 + dashboard
     )
-
-# ─── ESP32 Plain WebSocket Handler ──────────────────────────────────
-# This allows the ESP32 to use a simple WebSocket client without Socket.io
-@socketio.on('connect', namespace='/esp32')
-def esp32_connect():
-    log.info("[WS-ESP32] ESP32 connected via WebSocket")
-
-@socketio.on('disconnect', namespace='/esp32')
-def esp32_disconnect():
-    log.info("[WS-ESP32] ESP32 disconnected")

@@ -32,12 +32,12 @@ from PIL import Image
 load_dotenv(override=True)
 
 # ─── Configuration ────────────────────────────────────────────────
-GEMINI_API_KEY  = os.getenv("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY_HERE")
+GEMINI_API_KEY  = os.getenv("GEMINI_API_KEY", "AIzaSyDjfbGkSr1YIgUNdmXjM60NrGT1xzGkvOA")
 GEMINI_MODEL_ID = "gemini-2.0-flash"
 UPLOAD_DIR      = Path("uploads")
 FRONTEND_DIR    = Path("../frontend")
 MAX_IMAGE_SIZE  = 5 * 1024 * 1024   # 5 MB guard
-DATABASE_URL     = os.getenv("DATABASE_URL", "")  # Supabase PostgreSQL connection string
+DATABASE_URL     = os.getenv("postgresql://postgres.kwshvgramwulumyzwwfu:Tm2Wju4rV6BNlxtb@aws-1-ap-southeast-1.pooler.supabase.com:5432/postgres", "")  # Supabase PostgreSQL connection string
 
 # ─── Logging ──────────────────────────────────────────────────────
 logging.basicConfig(

@@ -1182,37 +1182,36 @@ bool isOverrideActive(ActuatorOverride& ov, unsigned long now) {
 // ─────────────────────────────────────────────────────────────────
 //  Actuator Helpers
 // ─────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────
+//  Actuator Helpers
+// ─────────────────────────────────────────────────────────────────
 void applyActuator(int pin, bool* state, bool value, const char* name, const char* reason) {
   if (*state == value) {
-    return;  // FIX: removed Serial.printf here — called every 5ms × 3 relays = 600 printf/s → UART stall
+    return;  // No change needed — no state update, no output
   }
-  *state = value;
   
+  *state = value;  // Update state to intended value
   int desiredPin = relayPinLevelForLoadState(value);
   digitalWrite(pin, desiredPin);
   
-  // Non-blocking verification readback.
+  // Verification readback for debugging
   int readPin = digitalRead(pin);
   int expectedPin = desiredPin;
-  bool coilEnergized = relayCoilEnergizedForLoadState(value);
   
   if (readPin == expectedPin) {
-    Serial.printf("[ACTUATOR] %-6s → %s  (%s) [OK pin=%d coil=%s contact=%s]\n",
+    Serial.printf("[ACTUATOR] %-6s → %s (%s) [✓ OK pin=%d]\n",
                   name,
                   value ? "ON" : "OFF",
                   reason,
-                  readPin,
-                  coilEnergized ? "ENERGIZED" : "DEENERGIZED",
-                  RELAY_CONTACT_NORMALLY_CLOSED ? "NC" : "NO");
+                  readPin);
   } else {
-    Serial.printf("[ACTUATOR] %-6s → %s  (%s) [WARN pin=%d expected=%d coil=%s contact=%s]\n",
+    Serial.printf("[ACTUATOR] %-6s → %s (%s) [⚠ MISMATCH pin=%d expected=%d]\n",
                   name,
                   value ? "ON" : "OFF",
                   reason,
                   readPin,
-                  expectedPin,
-                  coilEnergized ? "ENERGIZED" : "DEENERGIZED",
-                  RELAY_CONTACT_NORMALLY_CLOSED ? "NC" : "NO");
+                  expectedPin);
   }
 }
 

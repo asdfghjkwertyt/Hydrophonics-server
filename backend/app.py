@@ -378,6 +378,19 @@ pending_commands: dict = {
     "shed":  None,
 }
 
+# ─── Manual Override Tracking ─────────────────────────────────────
+# Mirrors the ESP32 ActuatorOverride system.
+# When the dashboard sends a manual command, we record the expiry time
+# (current time + MANUAL_OVERRIDE_SECONDS) for that actuator.
+# _apply_autonomous_decisions() skips any actuator whose override hasn't expired.
+MANUAL_OVERRIDE_SECONDS = 120   # 2 minutes — same as ESP32 OVERRIDE_TIMEOUT_MS
+manual_override_until: dict = {
+    "pump":  0.0,   # Unix timestamp when override expires (0 = not active)
+    "light": 0.0,
+    "mist":  0.0,
+    "shed":  0.0,
+}
+
 # ─── Sensor History Buffer ────────────────────────────────────────
 from collections import deque
 
@@ -820,8 +833,15 @@ def get_plant_alerts():
 # ─────────────────────────────────────────────────────────────────
 #  ROUTES – Sensor Data
 # ─────────────────────────────────────────────────────────────────
-def _apply_autonomous_decisions(sensor_data: dict, plant: dict):
-    """Apply auto-mode actuator decisions based on sensor readings and plant thresholds."""
+def _apply_autonomous_decisions(sensor_data: dict, plant: dict, now: float = None):
+    """
+    Apply auto-mode actuator decisions based on sensor readings and plant thresholds.
+    Actuators that are currently under a manual override are left untouched.
+    """
+    import time as _time
+    if now is None:
+        now = _time.time()
+
     sunlight     = sensor_data.get("sunlight", 0)
     humidity     = sensor_data.get("humidity", 0)
     light_on     = plant.get("light_on_threshold",   40)
@@ -831,39 +851,52 @@ def _apply_autonomous_decisions(sensor_data: dict, plant: dict):
     shed_close   = plant.get("shed_close_threshold", 70)
     shed_open_th = plant.get("shed_open_threshold",  50)
 
-    # Pump: always ON
-    sensor_data["pump"]        = True
-    sensor_data["pump_reason"] = "Continuous — always on"
+    def _is_overridden(actuator: str) -> bool:
+        """Return True if a manual override is still active for this actuator."""
+        expires = manual_override_until.get(actuator, 0.0)
+        if expires > now:
+            remaining = int(expires - now)
+            log.debug(f"[AUTO] {actuator} override active ({remaining}s remaining) — skipping autonomous logic")
+            return True
+        return False
 
-    # Light
-    if sunlight < light_on:
-        sensor_data["light"]        = True
-        sensor_data["light_reason"] = f"Low sunlight ({sunlight:.0f}%) — lights ON"
-    elif sunlight >= light_off:
-        sensor_data["light"]        = False
-        sensor_data["light_reason"] = f"Sufficient sunlight ({sunlight:.0f}%) — lights OFF"
-    else:
-        sensor_data["light_reason"] = f"Sunlight {sunlight:.0f}% — holding state"
+    # Pump: always ON (unless manually overridden)
+    if not _is_overridden("pump"):
+        sensor_data["pump"]        = True
+        sensor_data["pump_reason"] = "Continuous — always on"
 
-    # Mist
-    if humidity < hum_min:
-        sensor_data["mist"]        = True
-        sensor_data["mist_reason"] = f"Low humidity ({humidity:.0f}%) — mist ON"
-    elif humidity >= hum_max:
-        sensor_data["mist"]        = False
-        sensor_data["mist_reason"] = f"Humidity adequate ({humidity:.0f}%) — mist OFF"
-    else:
-        sensor_data["mist_reason"] = f"Humidity {humidity:.0f}% — holding state"
+    # Light (skip if manually overridden)
+    if not _is_overridden("light"):
+        if sunlight < light_on:
+            sensor_data["light"]        = True
+            sensor_data["light_reason"] = f"Low sunlight ({sunlight:.0f}%) — lights ON"
+        elif sunlight >= light_off:
+            sensor_data["light"]        = False
+            sensor_data["light_reason"] = f"Sufficient sunlight ({sunlight:.0f}%) — lights OFF"
+        else:
+            sensor_data["light_reason"] = f"Sunlight {sunlight:.0f}% — holding state"
 
-    # Shed
-    if sunlight > shed_close:
-        sensor_data["shed"]        = False
-        sensor_data["shed_reason"] = f"Intense sunlight ({sunlight:.0f}%) — shade CLOSED"
-    elif sunlight < shed_open_th:
-        sensor_data["shed"]        = True
-        sensor_data["shed_reason"] = f"Low sunlight ({sunlight:.0f}%) — shade OPEN"
-    else:
-        sensor_data["shed_reason"] = f"Sunlight {sunlight:.0f}% — holding state"
+    # Mist (skip if manually overridden)
+    if not _is_overridden("mist"):
+        if humidity < hum_min:
+            sensor_data["mist"]        = True
+            sensor_data["mist_reason"] = f"Low humidity ({humidity:.0f}%) — mist ON"
+        elif humidity >= hum_max:
+            sensor_data["mist"]        = False
+            sensor_data["mist_reason"] = f"Humidity adequate ({humidity:.0f}%) — mist OFF"
+        else:
+            sensor_data["mist_reason"] = f"Humidity {humidity:.0f}% — holding state"
+
+    # Shed (skip if manually overridden)
+    if not _is_overridden("shed"):
+        if sunlight > shed_close:
+            sensor_data["shed"]        = False
+            sensor_data["shed_reason"] = f"Intense sunlight ({sunlight:.0f}%) — shade CLOSED"
+        elif sunlight < shed_open_th:
+            sensor_data["shed"]        = True
+            sensor_data["shed_reason"] = f"Low sunlight ({sunlight:.0f}%) — shade OPEN"
+        else:
+            sensor_data["shed_reason"] = f"Sunlight {sunlight:.0f}% — holding state"
 
 
 @app.route("/sensor-data", methods=["POST"])
@@ -885,9 +918,10 @@ def receive_sensor_data():
 
             # ── Apply autonomous decisions if auto mode is enabled ────
             if dashboard_settings.get("auto_mode", True):
+                import time as _time
                 key   = current_plant_key
                 plant = plant_db.get(key, {})
-                _apply_autonomous_decisions(latest_sensor_data, plant)
+                _apply_autonomous_decisions(latest_sensor_data, plant, now=_time.time())
 
             # ── Append to rolling history ──
             sensor_history.append({
@@ -1272,7 +1306,10 @@ def set_control():
     """
     Dashboard POSTs control commands here.
     Body: {"pump": true/false, "light": true/false, ...}
+    Sets a 2-minute manual override for each actuator commanded so that
+    autonomous logic does not immediately revert the manual change.
     """
+    import time as _time
     try:
         data = request.get_json(force=True, silent=True)
         if not data:
@@ -1280,6 +1317,7 @@ def set_control():
 
         valid_keys = {"pump", "light", "mist", "shed"}
         updated = {}
+        now = _time.time()
 
         with state_lock:
             for key, value in data.items():
@@ -1287,8 +1325,11 @@ def set_control():
                     pending_commands[key] = value
                     latest_sensor_data[key] = value  # Optimistic update for dashboard
                     latest_sensor_data[f"{key}_reason"] = "Manual override active"
+                    # ── Lock this actuator from autonomous override for 2 minutes ──
+                    manual_override_until[key] = now + MANUAL_OVERRIDE_SECONDS
                     updated[key] = value
-                    log.info(f"[CONTROL] {key.upper()} → {'ON' if value else 'OFF'}")
+                    log.info(f"[CONTROL] {key.upper()} → {'ON' if value else 'OFF'} "
+                             f"(manual override locked for {MANUAL_OVERRIDE_SECONDS}s)")
 
         if not updated:
             return jsonify({"error": "No valid commands found"}), 400

@@ -35,7 +35,7 @@ load_dotenv(override=True)
 # ─── Configuration ────────────────────────────────────────────────
 GEMINI_API_KEY  = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL_ID = "gemini-2.0-flash"
-API_PROVIDER     = os.getenv("API_PROVIDER", "GEMINI").upper()  # GEMINI | KINDWISE
+API_PROVIDER     = os.getenv("API_PROVIDER", "KINDWISE").upper()  # GEMINI | KINDWISE
 
 # Kindwise / generic REST provider settings
 KINDWISE_API_KEY        = os.getenv("KINDWISE_API_KEY", "").strip()
@@ -391,7 +391,7 @@ pending_commands: dict = {
 # When the dashboard sends a manual command, we record the expiry time
 # (current time + MANUAL_OVERRIDE_SECONDS) for that actuator.
 # _apply_autonomous_decisions() skips any actuator whose override hasn't expired.
-MANUAL_OVERRIDE_SECONDS = 120   # 2 minutes — same as ESP32 OVERRIDE_TIMEOUT_MS
+MANUAL_OVERRIDE_SECONDS = 300   # 5 minutes — same as ESP32 OVERRIDE_TIMEOUT_MS
 manual_override_until: dict = {
     "pump":  0.0,   # Unix timestamp when override expires (0 = not active)
     "light": 0.0,

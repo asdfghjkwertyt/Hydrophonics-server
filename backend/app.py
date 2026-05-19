@@ -25,6 +25,7 @@ from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import google.genai as genai
 from google.genai import types as genai_types
+import requests
 from PIL import Image
 
 # ─── Load environment variables ───────────────────────────────────
@@ -32,8 +33,15 @@ from PIL import Image
 load_dotenv(override=True)
 
 # ─── Configuration ────────────────────────────────────────────────
-GEMINI_API_KEY  = os.getenv("GEMINI_API_KEY", "AIzaSyDjfbGkSr1YIgUNdmXjM60NrGT1xzGkvOA")
+GEMINI_API_KEY  = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL_ID = "gemini-2.0-flash"
+API_PROVIDER     = os.getenv("API_PROVIDER", "GEMINI").upper()  # GEMINI | KINDWISE
+
+# Kindwise / generic REST provider settings
+KINDWISE_API_KEY        = os.getenv("KINDWISE_API_KEY", "").strip()
+KINDWISE_API_URL        = os.getenv("KINDWISE_API_URL", "").strip()
+KINDWISE_API_KEY_HEADER = os.getenv("KINDWISE_API_KEY_HEADER", "Authorization").strip()
+KINDWISE_API_KEY_PREFIX = os.getenv("KINDWISE_API_KEY_PREFIX", "Bearer").strip()
 UPLOAD_DIR      = Path("uploads")
 FRONTEND_DIR    = Path("../frontend")
 MAX_IMAGE_SIZE  = 5 * 1024 * 1024   # 5 MB guard
@@ -495,6 +503,84 @@ def analyze_image_with_gemini(image_bytes: bytes) -> dict:
     except Exception as e:
         log.error(f"[GEMINI] Unexpected error: {e}", exc_info=True)
         return _error_result(f"Analysis error: {str(e)[:100]}")
+
+
+def analyze_image_with_kindwise(image_bytes: bytes) -> dict:
+    """
+    Send image bytes to a generic Kindwise-like REST API.
+    The full endpoint is taken from the `KINDWISE_API_URL` env var.
+    The API key is sent using the header name specified by `KINDWISE_API_KEY_HEADER`.
+    """
+    try:
+        if not KINDWISE_API_URL:
+            raise RuntimeError("KINDWISE_API_URL is not configured")
+
+        headers = {}
+        if KINDWISE_API_KEY:
+            if KINDWISE_API_KEY_PREFIX:
+                headers[KINDWISE_API_KEY_HEADER] = f"{KINDWISE_API_KEY_PREFIX} {KINDWISE_API_KEY}"
+            else:
+                headers[KINDWISE_API_KEY_HEADER] = KINDWISE_API_KEY
+
+        files = {
+            "image": ("image.jpg", image_bytes, "image/jpeg")
+        }
+
+        log.info(f"[KINDWISE] Posting image to {KINDWISE_API_URL}…")
+        resp = requests.post(KINDWISE_API_URL, headers=headers, files=files, timeout=30)
+        raw_text = resp.text or ""
+        log.info(f"[KINDWISE] Raw response status={resp.status_code} len={len(raw_text)}")
+
+        if resp.status_code != 200:
+            return _error_result(f"Kindwise API error {resp.status_code}: {raw_text[:200]}")
+
+        try:
+            data = resp.json()
+        except Exception:
+            return _error_result("Kindwise returned non-JSON response")
+
+        # Heuristic mapping of common fields
+        disease = data.get("disease") or data.get("disease_name") or data.get("label") or data.get("prediction")
+        confidence = data.get("confidence") or data.get("score") or data.get("probability")
+        recommendation = data.get("recommendation") or data.get("advice") or data.get("notes") or ""
+
+        # Normalize confidence to 0-100 integer
+        try:
+            if confidence is None:
+                confidence_int = 50
+            else:
+                # If probability between 0 and 1
+                c = float(confidence)
+                if 0.0 <= c <= 1.0:
+                    confidence_int = int(round(c * 100))
+                else:
+                    confidence_int = int(round(c))
+        except Exception:
+            confidence_int = 50
+
+        result = {
+            "disease_name": str(disease) if disease else "Unknown",
+            "confidence": max(0, min(100, int(confidence_int))),
+            "recommendation": str(recommendation) if recommendation else "No recommendation available.",
+            "raw_response": raw_text,
+            "analysis_time": datetime.datetime.utcnow().isoformat() + "Z",
+        }
+        result["status"] = "healthy" if result["disease_name"].lower() == "healthy" else "diseased"
+        return result
+
+    except Exception as e:
+        log.error(f"[KINDWISE] Unexpected error: {e}", exc_info=True)
+        return _error_result(f"Kindwise analysis error: {str(e)[:200]}")
+
+
+def analyze_image(image_bytes: bytes) -> dict:
+    """Dispatch to the configured provider for image analysis."""
+    provider = API_PROVIDER.upper() if API_PROVIDER else "GEMINI"
+    if provider == "KINDWISE":
+        return analyze_image_with_kindwise(image_bytes)
+    else:
+        # Default to Gemini flow
+        return analyze_image_with_gemini(image_bytes)
 
 
 def parse_gemini_response(text: str) -> dict:
@@ -1213,8 +1299,8 @@ def upload_image():
         latest_path.write_bytes(image_bytes)
         log.info(f"[IMAGE] Saved to {latest_path}")
 
-        # ── Run Gemini analysis ───────────────────────────────
-        analysis = analyze_image_with_gemini(image_bytes)
+        # ── Run configured provider analysis ───────────────────
+        analysis = analyze_image(image_bytes)
 
         with state_lock:
             latest_ai_result.update(analysis)
@@ -1576,7 +1662,8 @@ def health_check():
     return jsonify({
         "status":        "ok",
         "uptime":        str(datetime.datetime.utcnow()),
-        "gemini":        bool(GEMINI_API_KEY and GEMINI_API_KEY != "YOUR_GEMINI_API_KEY_HERE"),
+        "api_provider":  API_PROVIDER,
+        "api_configured": bool((API_PROVIDER == "GEMINI" and GEMINI_API_KEY) or (API_PROVIDER == "KINDWISE" and KINDWISE_API_URL and (KINDWISE_API_KEY or True))),
         "current_plant": pkey,
         "total_plants":  len(plant_db),
         "auto_mode":     dashboard_settings.get("auto_mode", True),

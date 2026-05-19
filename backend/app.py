@@ -40,8 +40,8 @@ API_PROVIDER     = os.getenv("API_PROVIDER", "KINDWISE").upper()  # GEMINI | KIN
 # Kindwise / generic REST provider settings
 KINDWISE_API_KEY        = os.getenv("KINDWISE_API_KEY", "").strip()
 KINDWISE_API_URL        = os.getenv("KINDWISE_API_URL", "").strip()
-KINDWISE_API_KEY_HEADER = os.getenv("KINDWISE_API_KEY_HEADER", "Authorization").strip()
-KINDWISE_API_KEY_PREFIX = os.getenv("KINDWISE_API_KEY_PREFIX", "Bearer").strip()
+KINDWISE_API_KEY_HEADER = os.getenv("KINDWISE_API_KEY_HEADER", "Api-Key").strip()
+KINDWISE_API_KEY_PREFIX = os.getenv("KINDWISE_API_KEY_PREFIX", "").strip()
 UPLOAD_DIR      = Path("uploads")
 FRONTEND_DIR    = Path("../frontend")
 MAX_IMAGE_SIZE  = 5 * 1024 * 1024   # 5 MB guard
@@ -515,6 +515,10 @@ def analyze_image_with_kindwise(image_bytes: bytes) -> dict:
         if not KINDWISE_API_URL:
             raise RuntimeError("KINDWISE_API_URL is not configured")
 
+        endpoint = KINDWISE_API_URL.rstrip("/")
+        if not endpoint.endswith("/identification"):
+            endpoint = f"{endpoint}/identification"
+
         headers = {}
         if KINDWISE_API_KEY:
             if KINDWISE_API_KEY_PREFIX:
@@ -522,16 +526,15 @@ def analyze_image_with_kindwise(image_bytes: bytes) -> dict:
             else:
                 headers[KINDWISE_API_KEY_HEADER] = KINDWISE_API_KEY
 
-        files = {
-            "image": ("image.jpg", image_bytes, "image/jpeg")
-        }
+        params = {"async": "false"}
+        files = {"image1": ("image.jpg", image_bytes, "image/jpeg")}
 
-        log.info(f"[KINDWISE] Posting image to {KINDWISE_API_URL}…")
-        resp = requests.post(KINDWISE_API_URL, headers=headers, files=files, timeout=30)
+        log.info(f"[KINDWISE] Posting image to {endpoint}…")
+        resp = requests.post(endpoint, headers=headers, params=params, files=files, timeout=30)
         raw_text = resp.text or ""
         log.info(f"[KINDWISE] Raw response status={resp.status_code} len={len(raw_text)}")
 
-        if resp.status_code != 200:
+        if resp.status_code not in (200, 201):
             return _error_result(f"Kindwise API error {resp.status_code}: {raw_text[:200]}")
 
         try:
@@ -539,10 +542,33 @@ def analyze_image_with_kindwise(image_bytes: bytes) -> dict:
         except Exception:
             return _error_result("Kindwise returned non-JSON response")
 
-        # Heuristic mapping of common fields
-        disease = data.get("disease") or data.get("disease_name") or data.get("label") or data.get("prediction")
-        confidence = data.get("confidence") or data.get("score") or data.get("probability")
-        recommendation = data.get("recommendation") or data.get("advice") or data.get("notes") or ""
+        result_node = data.get("result", {}) if isinstance(data, dict) else {}
+        disease_suggestions = (result_node.get("disease", {}) or {}).get("suggestions", []) if isinstance(result_node, dict) else []
+        crop_suggestions = (result_node.get("crop", {}) or {}).get("suggestions", []) if isinstance(result_node, dict) else []
+
+        top_disease = disease_suggestions[0] if disease_suggestions else None
+        top_crop = crop_suggestions[0] if crop_suggestions else None
+
+        disease = None
+        confidence = None
+        recommendation = ""
+        if top_disease:
+            disease = top_disease.get("name") or top_disease.get("scientific_name")
+            confidence = top_disease.get("probability")
+            details = top_disease.get("details") or {}
+            recommendation = (
+                (details.get("treatment") or {}).get("prevention")
+                or (details.get("treatment") or {}).get("chemical")
+                or details.get("description")
+                or details.get("symptoms")
+                or ""
+            )
+        elif top_crop:
+            disease = top_crop.get("name") or top_crop.get("scientific_name")
+            confidence = top_crop.get("probability")
+
+        if not disease:
+            disease = data.get("access_token") and "Unknown" or "Unknown"
 
         # Normalize confidence to 0-100 integer
         try:
@@ -557,6 +583,9 @@ def analyze_image_with_kindwise(image_bytes: bytes) -> dict:
                     confidence_int = int(round(c))
         except Exception:
             confidence_int = 50
+
+        if not recommendation:
+            recommendation = "Review the identified disease details and apply crop.health treatment guidance."
 
         result = {
             "disease_name": str(disease) if disease else "Unknown",
